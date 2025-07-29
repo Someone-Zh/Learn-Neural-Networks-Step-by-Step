@@ -63,7 +63,7 @@ def train():
     draw(X,Y)
     model = Sequential()
     model.add(Dense(units=1,activation='sigmoid', input_dim=2))
-    model.compile(loss=mean_squared_error,optimizer=SGD(),metrics=Accuracy())
+    model.compile(loss=mean_squared_error,optimizer=SGD(),metrics=[Accuracy()])
     model.fit(X,Y,epochs=5000,batch_size=10)
     pres = model.predict(X)
     draw(X,Y,pres)
