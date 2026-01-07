@@ -26,7 +26,7 @@ def get_beans(num):
     return xs, ys
 
 
-def draw(X,Y,pres=None):
+def draw(X,Y,model=None):
     # 创建图形和3D坐标轴
     fig = plt.figure(figsize=(8, 6))
     ax = fig.add_subplot(111, projection='3d')  # 关键：指定 projection='3d'
@@ -46,13 +46,19 @@ def draw(X,Y,pres=None):
     sc = ax.scatter(x, y, z, c=z, cmap='viridis', s=50, alpha=0.8)
     # 添加颜色条
     plt.colorbar(sc, label='Z Value')
-    if pres is not None:
+    if model is not None:
         # 使用 linspace 创建规则间隔的数据点用于 meshgrid
-        xi = np.linspace(min(x), max(x), 50)
-        yi = np.linspace(min(y), max(y), 50)
-        X, Y = np.meshgrid(xi, yi)
         
-        surf = ax.plot_surface(X, Y, Z, cmap='viridis', edgecolor='none')
+        x_min, x_max = X[:, 0].min() - .5, X[:, 0].max() + .5
+        y_min, y_max = X[:, 1].min() - .5, X[:, 1].max() + .5
+        xx, yy = np.meshgrid(np.linspace(x_min, x_max, 100),
+                            np.linspace(y_min, y_max, 100))
+
+        # 对网格中的每个点进行预测
+        grid_points = np.c_[xx.ravel(), yy.ravel()]
+        Z = model.predict(grid_points)
+        Z = Z.reshape(xx.shape)
+        surf = ax.plot_surface(xx,yy, Z, cmap='viridis', edgecolor='none')
         # 添加颜色条
         fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5)
     # 显示图形
@@ -60,11 +66,13 @@ def draw(X,Y,pres=None):
 m=100
 def train():
     X,Y = get_beans(m)
-    draw(X,Y)
+    # draw(X,Y)
     model = Sequential()
-    model.add(Dense(units=1,activation='sigmoid', input_dim=2))
-    model.compile(loss=mean_squared_error,optimizer=SGD(),metrics=[Accuracy()])
-    model.fit(X,Y,epochs=5000,batch_size=10)
+    model.add(Dense(units=2,activation='sigmoid', input_dim=2))
+    model.add(Dense(units=1,activation='sigmoid'))
+    model.compile(loss=mean_squared_error,optimizer=SGD(learning_rate=0.1),metrics=[Accuracy()])
+    model.fit(X,Y,epochs=3000,batch_size=10)
     pres = model.predict(X)
-    draw(X,Y,pres)
+    draw(X,Y,model)
+    pass
 train()
