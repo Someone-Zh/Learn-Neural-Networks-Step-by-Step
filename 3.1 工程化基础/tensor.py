@@ -26,6 +26,18 @@ class Tensor:
         self._op = _op
         # 张量标签，便于识别
         self.label = label
+    
+    def zero_grad(self):
+        """清零梯度"""
+        if isinstance(self.data, (int, float)):
+            self.grad = 0.0
+        elif isinstance(self.data, list):
+            if not self.data:
+                self.grad = []
+            elif isinstance(self.data[0], list):
+                self.grad = [[0.0 for _ in row] for row in self.data]
+            else:
+                self.grad = [0.0 for _ in self.data]
 
     def __repr__(self):
         return f"Tensor(data={self.data}, grad={self.grad}, op={self._op})"
@@ -81,7 +93,12 @@ class Tensor:
         elif not isinstance(self.data, list) and not isinstance(other.data, list):
             out_data = self.data * other.data
         else:
-            raise NotImplementedError("矩阵乘以矩阵需要使用.matmul()方法")
+            # 矩阵逐元素乘法
+            if len(self.data) != len(other.data):
+                raise ValueError("矩阵逐元素乘法要求两个矩阵行数相同")
+            if len(self.data[0]) != len(other.data[0]):
+                raise ValueError("矩阵逐元素乘法要求两个矩阵列数相同")
+            out_data = [[self.data[i][j] * other.data[i][j] for j in range(len(self.data[0]))] for i in range(len(self.data))]
 
         # 创建新的Tensor对象
         out = Tensor(out_data, (self, other), '*')
@@ -101,6 +118,10 @@ class Tensor:
                     other.grad = [[other.grad[i][j] + self.data * g[i][j] for j in range(len(other.grad[0]))] for i in range(len(other.grad))]
                     total = sum(other.data[i][j] * g[i][j] for i in range(len(other.data)) for j in range(len(other.data[0])))
                     self.grad += total
+                else:
+                    # 两个都是矩阵的情况（逐元素乘法）
+                    self.grad = [[self.grad[i][j] + other.data[i][j] * g[i][j] for j in range(len(self.grad[0]))] for i in range(len(self.grad))]
+                    other.grad = [[other.grad[i][j] + self.data[i][j] * g[i][j] for j in range(len(other.grad[0]))] for i in range(len(other.grad))]
             else:
                 # 两个都是标量的情况
                 self.grad += other.data * g
@@ -142,20 +163,48 @@ class Tensor:
     # 减法运算：通过加法和负号实现
     def __sub__(self, other): return self + (-other)
     # 除法运算：通过乘法和负指数实现
-    def __truediv__(self, other): return self * (other ** -1)
+    def __truediv__(self, other): 
+        # 确保other是Tensor类型
+        other = self._ensure_tensor(other)
+        # 检查除数是否为零
+        if isinstance(other.data, (int, float)):
+            if other.data == 0:
+                raise ValueError("除数不能为零")
+        elif isinstance(other.data, list):
+            for row in other.data:
+                if isinstance(row, list):
+                    for x in row:
+                        if x == 0:
+                            raise ValueError("除数不能为零")
+                else:
+                    if row == 0:
+                        raise ValueError("除数不能为零")
+        return self * (other ** -1)
 
     def matmul(self, other):
+        # 确保other是Tensor类型
+        other = self._ensure_tensor(other)
         # 获取两个张量的数据
         A, B = self.data, other.data
+        
+        # 验证输入类型
+        if not (isinstance(A, list) and isinstance(B, list)):
+            raise ValueError("矩阵乘法要求两个操作数都是列表形式的矩阵")
+        
         # 简单处理向量转矩阵
-        if isinstance(A, list) and A and not isinstance(A[0], list): A = [A]
-        if isinstance(B, list) and B and not isinstance(B[0], list): B = [[x] for x in B]
+        if A and not isinstance(A[0], list): A = [A]
+        if B and not isinstance(B[0], list): B = [[x] for x in B]
+        
+        # 验证矩阵非空
+        if not A or not B or not A[0] or not B[0]:
+            raise ValueError("矩阵不能为空")
         
         # 获取矩阵维度信息
         rows_A, cols_A = len(A), len(A[0])
         rows_B, cols_B = len(B), len(B[0])
         # 验证矩阵维度是否匹配
-        assert cols_A == rows_B, f"矩阵维度不匹配 {cols_A} != {rows_B}"
+        if cols_A != rows_B:
+            raise ValueError(f"矩阵维度不匹配: 第一个矩阵的列数({cols_A}) != 第二个矩阵的行数({rows_B})")
 
         # 执行矩阵乘法运算
         out_data = [[sum(A[i][k] * B[k][j] for k in range(cols_A)) for j in range(cols_B)] for i in range(rows_A)]
@@ -240,12 +289,109 @@ class Tensor:
         # 设置反向传播函数
         out._backward = _backward
         return out
+    
+    def relu(self):
+        """ReLU激活函数"""
+        if isinstance(self.data, list):
+            out_data = [[max(0, x) for x in row] for row in self.data]
+        else:
+            out_data = max(0, self.data)
+        # 创建新的Tensor对象
+        out = Tensor(out_data, (self,), 'relu')
+        
+        def _backward():
+            # 获取输出张量的梯度
+            g = out.grad
+            # ReLU的导数是：x>0时为1，否则为0
+            if isinstance(self.grad, list):
+                if isinstance(self.data[0], list):
+                    # 对于二维矩阵，应用链式法则
+                    local = [[1.0 if self.data[i][j] > 0 else 0.0 for j in range(len(self.data[0]))] for i in range(len(self.data))]
+                    self.grad = [[self.grad[i][j] + local[i][j] * g[i][j] for j in range(len(self.grad[0]))] for i in range(len(self.grad))]
+                else:
+                    # 对于一维数组，应用链式法则
+                    local = [1.0 if self.data[i] > 0 else 0.0 for i in range(len(self.data))]
+                    self.grad = [self.grad[i] + local[i] * g[i] for i in range(len(self.grad))]
+            else:
+                # 对于标量，应用链式法则
+                self.grad += (1.0 if self.data > 0 else 0.0) * g
+        # 设置反向传播函数
+        out._backward = _backward
+        return out
+    
+    def tanh(self):
+        """tanh激活函数"""
+        if isinstance(self.data, list):
+            out_data = [[math.tanh(x) for x in row] for row in self.data]
+        else:
+            out_data = math.tanh(self.data)
+        # 创建新的Tensor对象
+        out = Tensor(out_data, (self,), 'tanh')
+        
+        def _backward():
+            # 获取输出张量的梯度
+            g = out.grad
+            # tanh的导数是：1 - tanh^2(x)
+            if isinstance(self.grad, list):
+                if isinstance(self.data[0], list):
+                    # 对于二维矩阵，应用链式法则
+                    local = [[1.0 - out.data[i][j] ** 2 for j in range(len(out.data[0]))] for i in range(len(out.data))]
+                    self.grad = [[self.grad[i][j] + local[i][j] * g[i][j] for j in range(len(self.grad[0]))] for i in range(len(self.grad))]
+                else:
+                    # 对于一维数组，应用链式法则
+                    local = [1.0 - out.data[i] ** 2 for i in range(len(out.data))]
+                    self.grad = [self.grad[i] + local[i] * g[i] for i in range(len(self.grad))]
+            else:
+                # 对于标量，应用链式法则
+                self.grad += (1.0 - out.data ** 2) * g
+        # 设置反向传播函数
+        out._backward = _backward
+        return out
+    
+    def sigmoid(self):
+        """sigmoid激活函数"""
+        def sigmoid_func(x):
+            return 1.0 / (1.0 + math.exp(-x))
+        
+        if isinstance(self.data, list):
+            out_data = [[sigmoid_func(x) for x in row] for row in self.data]
+        else:
+            out_data = sigmoid_func(self.data)
+        # 创建新的Tensor对象
+        out = Tensor(out_data, (self,), 'sigmoid')
+        
+        def _backward():
+            # 获取输出张量的梯度
+            g = out.grad
+            # sigmoid的导数是：sigmoid(x) * (1 - sigmoid(x))
+            if isinstance(self.grad, list):
+                if isinstance(self.data[0], list):
+                    # 对于二维矩阵，应用链式法则
+                    local = [[out.data[i][j] * (1.0 - out.data[i][j]) for j in range(len(out.data[0]))] for i in range(len(out.data))]
+                    self.grad = [[self.grad[i][j] + local[i][j] * g[i][j] for j in range(len(self.grad[0]))] for i in range(len(self.grad))]
+                else:
+                    # 对于一维数组，应用链式法则
+                    local = [out.data[i] * (1.0 - out.data[i]) for i in range(len(out.data))]
+                    self.grad = [self.grad[i] + local[i] * g[i] for i in range(len(self.grad))]
+            else:
+                # 对于标量，应用链式法则
+                self.grad += (out.data * (1.0 - out.data)) * g
+        # 设置反向传播函数
+        out._backward = _backward
+        return out
 
     def log(self):
         # 计算自然对数函数ln(x)
         if isinstance(self.data, list):
+            # 检查是否有非正数
+            for row in self.data:
+                for x in row:
+                    if x <= 0:
+                        raise ValueError("对数函数要求输入值大于0")
             out_data = [[math.log(x) for x in row] for row in self.data]
         else:
+            if self.data <= 0:
+                raise ValueError("对数函数要求输入值大于0")
             out_data = math.log(self.data)
         # 创建表示对数函数结果的新张量
         out = Tensor(out_data, (self,), 'log')
