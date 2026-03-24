@@ -161,7 +161,22 @@ class Tensor:
     # 负号运算：返回自身的相反数
     def __neg__(self): return self * -1
     # 减法运算：通过加法和负号实现
-    def __sub__(self, other): return self + (-other)
+    def __sub__(self, other):
+        other = self._ensure_tensor(other)
+        return self + (-other)
+    
+    # 右操作方法：支持 other op self 形式的运算
+    def __radd__(self, other):
+        return self + other
+    
+    def __rmul__(self, other):
+        return self * other
+    
+    def __rsub__(self, other):
+        return (-self) + other
+    
+    def __rtruediv__(self, other):
+        return self._ensure_tensor(other) * (self ** -1)
     # 除法运算：通过乘法和负指数实现
     def __truediv__(self, other): 
         # 确保other是Tensor类型
@@ -264,7 +279,12 @@ class Tensor:
     def exp(self):
         # 计算自然指数函数e^x
         if isinstance(self.data, list):
-            out_data = [[math.exp(x) for x in row] for row in self.data]
+            if not self.data:
+                out_data = []
+            elif isinstance(self.data[0], list):
+                out_data = [[math.exp(x) for x in row] for row in self.data]
+            else:
+                out_data = [math.exp(x) for x in self.data]
         else:
             out_data = math.exp(self.data)
         # 创建表示指数函数结果的新张量
@@ -275,7 +295,9 @@ class Tensor:
             g = out.grad
             # 指数函数的导数是其自身
             if isinstance(self.grad, list):
-                if isinstance(self.data[0], list):
+                if not self.data:
+                    pass  # 空列表无需处理
+                elif isinstance(self.data[0], list):
                     # 对于二维矩阵，应用链式法则
                     local = [[out.data[i][j] for j in range(len(out.data[0]))] for i in range(len(out.data))]
                     self.grad = [[self.grad[i][j] + local[i][j] * g[i][j] for j in range(len(self.grad[0]))] for i in range(len(self.grad))]
@@ -293,7 +315,12 @@ class Tensor:
     def relu(self):
         """ReLU激活函数"""
         if isinstance(self.data, list):
-            out_data = [[max(0, x) for x in row] for row in self.data]
+            if not self.data:
+                out_data = []
+            elif isinstance(self.data[0], list):
+                out_data = [[max(0, x) for x in row] for row in self.data]
+            else:
+                out_data = [max(0, x) for x in self.data]
         else:
             out_data = max(0, self.data)
         # 创建新的Tensor对象
@@ -304,7 +331,9 @@ class Tensor:
             g = out.grad
             # ReLU的导数是：x>0时为1，否则为0
             if isinstance(self.grad, list):
-                if isinstance(self.data[0], list):
+                if not self.data:
+                    pass  # 空列表无需处理
+                elif isinstance(self.data[0], list):
                     # 对于二维矩阵，应用链式法则
                     local = [[1.0 if self.data[i][j] > 0 else 0.0 for j in range(len(self.data[0]))] for i in range(len(self.data))]
                     self.grad = [[self.grad[i][j] + local[i][j] * g[i][j] for j in range(len(self.grad[0]))] for i in range(len(self.grad))]
@@ -322,7 +351,12 @@ class Tensor:
     def tanh(self):
         """tanh激活函数"""
         if isinstance(self.data, list):
-            out_data = [[math.tanh(x) for x in row] for row in self.data]
+            if not self.data:
+                out_data = []
+            elif isinstance(self.data[0], list):
+                out_data = [[math.tanh(x) for x in row] for row in self.data]
+            else:
+                out_data = [math.tanh(x) for x in self.data]
         else:
             out_data = math.tanh(self.data)
         # 创建新的Tensor对象
@@ -333,7 +367,9 @@ class Tensor:
             g = out.grad
             # tanh的导数是：1 - tanh^2(x)
             if isinstance(self.grad, list):
-                if isinstance(self.data[0], list):
+                if not self.data:
+                    pass  # 空列表无需处理
+                elif isinstance(self.data[0], list):
                     # 对于二维矩阵，应用链式法则
                     local = [[1.0 - out.data[i][j] ** 2 for j in range(len(out.data[0]))] for i in range(len(out.data))]
                     self.grad = [[self.grad[i][j] + local[i][j] * g[i][j] for j in range(len(self.grad[0]))] for i in range(len(self.grad))]
@@ -354,7 +390,12 @@ class Tensor:
             return 1.0 / (1.0 + math.exp(-x))
         
         if isinstance(self.data, list):
-            out_data = [[sigmoid_func(x) for x in row] for row in self.data]
+            if not self.data:
+                out_data = []
+            elif isinstance(self.data[0], list):
+                out_data = [[sigmoid_func(x) for x in row] for row in self.data]
+            else:
+                out_data = [sigmoid_func(x) for x in self.data]
         else:
             out_data = sigmoid_func(self.data)
         # 创建新的Tensor对象
@@ -365,7 +406,9 @@ class Tensor:
             g = out.grad
             # sigmoid的导数是：sigmoid(x) * (1 - sigmoid(x))
             if isinstance(self.grad, list):
-                if isinstance(self.data[0], list):
+                if not self.data:
+                    pass  # 空列表无需处理
+                elif isinstance(self.data[0], list):
                     # 对于二维矩阵，应用链式法则
                     local = [[out.data[i][j] * (1.0 - out.data[i][j]) for j in range(len(out.data[0]))] for i in range(len(out.data))]
                     self.grad = [[self.grad[i][j] + local[i][j] * g[i][j] for j in range(len(self.grad[0]))] for i in range(len(self.grad))]
@@ -383,12 +426,21 @@ class Tensor:
     def log(self):
         # 计算自然对数函数ln(x)
         if isinstance(self.data, list):
-            # 检查是否有非正数
-            for row in self.data:
-                for x in row:
+            if not self.data:
+                out_data = []
+            elif isinstance(self.data[0], list):
+                # 检查是否有非正数
+                for row in self.data:
+                    for x in row:
+                        if x <= 0:
+                            raise ValueError("对数函数要求输入值大于0")
+                out_data = [[math.log(x) for x in row] for row in self.data]
+            else:
+                # 一维数组
+                for x in self.data:
                     if x <= 0:
                         raise ValueError("对数函数要求输入值大于0")
-            out_data = [[math.log(x) for x in row] for row in self.data]
+                out_data = [math.log(x) for x in self.data]
         else:
             if self.data <= 0:
                 raise ValueError("对数函数要求输入值大于0")
@@ -401,7 +453,9 @@ class Tensor:
             g = out.grad
             # 对数函数的导数是1/x
             if isinstance(self.grad, list):
-                if isinstance(self.data[0], list):
+                if not self.data:
+                    pass  # 空列表无需处理
+                elif isinstance(self.data[0], list):
                     # 对于二维矩阵，应用链式法则
                     local = [[1.0 / self.data[i][j] for j in range(len(self.data[0]))] for i in range(len(self.data))]
                     self.grad = [[self.grad[i][j] + local[i][j] * g[i][j] for j in range(len(self.grad[0]))] for i in range(len(self.grad))]
@@ -416,6 +470,133 @@ class Tensor:
         out._backward = _backward
         return out
 
+    def softmax(self):
+        """Softmax激活函数
+        
+        对输入的每一行计算 softmax:
+        softmax(x_i) = exp(x_i - max(x)) / sum(exp(x - max(x)))
+        
+        数值稳定性：减去最大值防止溢出
+        
+        返回:
+            应用 softmax 后的 Tensor
+        """
+        # 确保输入是二维列表（batch, features）
+        if isinstance(self.data, list) and self.data:
+            if isinstance(self.data[0], list):
+                # 二维输入 (batch, features)
+                out_data = []
+                for row in self.data:
+                    # 数值稳定性：减去最大值
+                    max_val = max(row)
+                    exp_vals = [math.exp(x - max_val) for x in row]
+                    sum_exp = sum(exp_vals)
+                    out_data.append([e / sum_exp for e in exp_vals])
+            else:
+                # 一维输入 (features,)
+                max_val = max(self.data)
+                exp_vals = [math.exp(x - max_val) for x in self.data]
+                sum_exp = sum(exp_vals)
+                out_data = [e / sum_exp for e in exp_vals]
+        else:
+            raise ValueError("Softmax 要求输入为非空列表")
+        
+        out = Tensor(out_data, (self,), 'softmax')
+        
+        def _backward():
+            """Softmax 反向传播
+            
+            softmax 的 Jacobian 矩阵为:
+            J[i][j] = s[i] * (delta_ij - s[j])
+            
+            对于 batch 输入，每个样本独立计算
+            """
+            g = out.grad
+            
+            if isinstance(self.data, list) and isinstance(self.data[0], list):
+                # 二维输入 (batch, features)
+                for b in range(len(self.data)):
+                    s = out.data[b]  # softmax 输出
+                    n = len(s)
+                    # 计算梯度: dL/dx = sum_j (dL/ds_j * ds_j/dx_i)
+                    # ds_j/dx_i = s_j * (delta_ij - s_i)
+                    for i in range(n):
+                        grad_sum = 0.0
+                        for j in range(n):
+                            if i == j:
+                                grad_sum += g[b][j] * s[j] * (1 - s[i])
+                            else:
+                                grad_sum += g[b][j] * (-s[j] * s[i])
+                        self.grad[b][i] += grad_sum
+            else:
+                # 一维输入 (features,)
+                s = out.data
+                n = len(s)
+                for i in range(n):
+                    grad_sum = 0.0
+                    for j in range(n):
+                        if i == j:
+                            grad_sum += g[j] * s[j] * (1 - s[i])
+                        else:
+                            grad_sum += g[j] * (-s[j] * s[i])
+                    self.grad[i] += grad_sum
+        
+        out._backward = _backward
+        return out
+    
+    def cross_entropy_loss(self, targets):
+        """交叉熵损失函数
+        
+        参数:
+            targets: 真实标签的 one-hot 编码 Tensor，形状为 (Batch, num_classes)
+        
+        返回:
+            平均交叉熵损失（标量 Tensor）
+        
+        公式: L = -1/N * sum(sum(targets * log(softmax_output)))
+        """
+        # 先计算 softmax
+        probs = self.softmax()
+        
+        # 计算交叉熵: -sum(targets * log(probs + epsilon))
+        # 添加小常数防止 log(0)
+        epsilon = 1e-15
+        batch_size = len(probs.data)
+        num_classes = len(probs.data[0])
+        
+        # 计算每个样本的交叉熵
+        losses = []
+        for b in range(batch_size):
+            sample_loss = 0.0
+            for c in range(num_classes):
+                # targets 是 one-hot，只有正确类别为 1
+                p = probs.data[b][c]
+                # clip 防止 log(0)
+                p = max(epsilon, min(1 - epsilon, p))
+                sample_loss -= targets.data[b][c] * math.log(p)
+            losses.append(sample_loss)
+        
+        # 平均损失
+        avg_loss = sum(losses) / batch_size
+        
+        # 创建损失 Tensor
+        out = Tensor(avg_loss, (probs,), 'cross_entropy')
+        
+        def _backward():
+            """交叉熵 + softmax 的反向传播
+            
+            组合导数: dL/dz = probs - targets
+            这是因为 softmax + cross_entropy 有优美的简化形式
+            """
+            g = out.grad  # 标量梯度
+            for b in range(batch_size):
+                for c in range(num_classes):
+                    # dL/dz = (probs - targets) * grad_from_upstream
+                    probs.grad[b][c] += g * (probs.data[b][c] - targets.data[b][c]) / batch_size
+        
+        out._backward = _backward
+        return out
+    
     def backward(self):
         # 拓扑排序列表，用于按正确顺序执行反向传播
         topo = []
