@@ -134,11 +134,11 @@ class MnistModel():
         loss.backward()
         
         # 优化器更新参数
-        # 注意：这里为了演示方便，每次训练步都创建一个新的优化器实例
-        # 在实际代码中，应该保持优化器实例
-        opt = optim_class(self.params, lr=lr)
-        opt.step()
-        
+        if not hasattr(self, 'optimizer') or not isinstance(self.optimizer, optim_class):
+            self.optimizer = optim_class(self.params, lr=lr)
+        else:
+            self.optimizer.lr = lr
+        self.optimizer.step()
         # 记录损失值
         self.loss_history.append(loss.data)
         return loss.data
