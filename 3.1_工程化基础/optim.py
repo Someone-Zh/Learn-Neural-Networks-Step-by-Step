@@ -3,8 +3,12 @@ import math
 
 class Optimizer:
     """优化器基类"""
-    def zero_grad(self):
-        """将所有参数的梯度清零"""
+    def zero_grad(self, release_graph=True):
+        """将所有参数的梯度清零，可选择是否释放计算图
+        
+        参数:
+            release_graph: 是否释放计算图节点，默认为 True
+        """
         for p in self.params:
             if isinstance(p.grad, list):
                 if isinstance(p.grad[0], list):
@@ -16,6 +20,12 @@ class Optimizer:
             else:
                 # 对标量清零梯度
                 p.grad = 0.0
+            
+            # 释放计算图节点
+            if release_graph:
+                p._prev = set()
+                p._backward = lambda: None
+                p._retain_graph = False
 
 class SGD(Optimizer):
     """随机梯度下降优化器"""

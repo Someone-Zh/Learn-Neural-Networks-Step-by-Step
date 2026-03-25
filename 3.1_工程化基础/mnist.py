@@ -1,11 +1,13 @@
 import gzip
 import struct
 import json
-import os
+import time
 from tensor import Tensor
 from model import Layer, SimpleFCN
 from optim import SGD, Adam
 import matplotlib.pyplot as plt
+from tqdm import tqdm
+
 
 def load_mnist_images(filename):
     with gzip.open(filename, 'rb') as f:
@@ -289,7 +291,11 @@ def train():
     optimizer = Adam
     
     print("开始训练...")
+    total_start_time = time.time()
+    num_batches_per_epoch = (len(x_train) + batch_size - 1) // batch_size
+    
     for epoch in range(epochs):
+        epoch_start_time = time.time()
         # 打乱训练数据
         indices = list(range(len(x_train)))
         import random
@@ -298,8 +304,13 @@ def train():
         total_loss = 0
         num_batches = 0
         
-        # 按批次训练
-        for i in range(0, len(x_train), batch_size):
+        # 按批次训练，使用 tqdm 显示进度
+        pbar = tqdm(range(0, len(x_train), batch_size), 
+                    desc=f"Epoch {epoch + 1}/{epochs}",
+                    total=num_batches_per_epoch,
+                    unit="batch")
+        
+        for i in pbar:
             batch_indices = indices[i:i + batch_size]
             x_batch = [x_train[idx] for idx in batch_indices]
             y_batch = [y_train[idx] for idx in batch_indices]
@@ -309,10 +320,10 @@ def train():
             total_loss += loss
             num_batches += 1
             
-            # 每100个批次打印一次
-            if num_batches % 100 == 0:
-                print(f"Epoch {epoch + 1}, Batch {num_batches}, Loss: {loss:.4f}")
+            # 更新进度条显示当前损失
+            pbar.set_postfix({'loss': f'{loss:.4f}'})
         
+        epoch_time = time.time() - epoch_start_time
         avg_loss = total_loss / num_batches
         
         # 在测试集上评估
@@ -325,9 +336,15 @@ def train():
             correct += sum(1 for p, y in zip(predictions, y_batch) if p == y)
         
         accuracy = correct / len(x_test) * 100
-        print(f"Epoch {epoch + 1}/{epochs}, Avg Loss: {avg_loss:.4f}, Test Accuracy: {accuracy:.2f}%")
+        elapsed_time = time.time() - total_start_time
+        avg_epoch_time = elapsed_time / (epoch + 1)
+        remaining_time = avg_epoch_time * (epochs - epoch - 1)
+        print(f"Epoch {epoch + 1}/{epochs} - {epoch_time:.1f}s - "
+              f"Avg Loss: {avg_loss:.4f}, Test Accuracy: {accuracy:.2f}%, "
+              f"ETA: {remaining_time/60:.1f}min")
     
-    print("训练完成!")
+    total_time = time.time() - total_start_time
+    print(f"训练完成! 总耗时: {total_time/60:.1f}分钟")
     
     # 保存模型参数
     model.save('mnist_model.json')
@@ -347,6 +364,11 @@ def train():
 def _train_batch_worker(args):
     """并行训练工作函数（用于多进程）
     
+    修正思路：
+    1. 子进程接收模型参数，创建本地模型副本
+    2. 子进程独立执行前向传播和反向传播计算梯度
+    3. 返回梯度数据（而非计算图）给主进程
+    
     参数:
         args: 元组 (params, x_batch, y_batch, lr, optim_class_name)
     
@@ -355,11 +377,11 @@ def _train_batch_worker(args):
     """
     params, x_batch, y_batch, lr, optim_class_name = args
     
-    # 在子进程中创建模型和优化器
+    # 在子进程中创建模型
     model = MnistModel()
     model.load_params(params)
     
-    # 根据名称获取优化器类
+    # 根据名称获取优化器类（仅用于确定优化器类型，子进程不执行优化步骤）
     if optim_class_name == 'Adam':
         from optim import Adam as optim_class
     elif optim_class_name == 'SGD':
@@ -367,14 +389,41 @@ def _train_batch_worker(args):
     else:
         raise ValueError(f"未知优化器: {optim_class_name}")
     
-    # 执行训练步骤
-    loss = model.train_step(x_batch, y_batch, lr, optim_class)
-    print(f"loss:{loss}",end="\r")
-    # 返回梯度和损失
-    return model.get_grads(), loss
+    # === 子进程执行前向传播 ===
+    X = Tensor(x_batch)
+    z_true_data = []
+    for label in y_batch:
+        one_hot = [0.0] * 10
+        one_hot[int(label)] = 1.0
+        z_true_data.append(one_hot)
+    z_true = Tensor(z_true_data)
+    
+    # 前向传播
+    z_logits = model.forward(X)
+    
+    # 计算损失
+    loss = z_logits.cross_entropy_loss(z_true)
+    
+    # === 清零梯度（不释放计算图，因为需要反向传播）===
+    for p in model.params:
+        if isinstance(p.grad, list):
+            if isinstance(p.grad[0], list):
+                p.grad = [[0.0 for _ in row] for row in p.grad]
+            else:
+                p.grad = [0.0 for _ in p.grad]
+        else:
+            p.grad = 0.0
+    
+    # === 反向传播（使用梯度检查，释放计算图）===
+    loss.backward(retain_graph=False)
+    
+    print(f"loss:{loss.data}", end="\r")
+    
+    # === 返回梯度数据给主进程 ===
+    return model.get_grads(), loss.data
 
 
-def train_parallel(num_workers=4, batch_size=32, learning_rate=0.01, epochs=5):
+def train_parallel(num_workers=4, batch_size=32, learning_rate=0.01, epochs=3):
     """并行训练MNIST模型（数据并行）
     
     参数:
@@ -402,24 +451,32 @@ def train_parallel(num_workers=4, batch_size=32, learning_rate=0.01, epochs=5):
     # 创建主模型
     model = MnistModel()
     
-    # 创建优化器
-    # optimizer = Adam
-    optimizer = SGD
+    # 创建优化器 交叉
+    optimizer = Adam
+    # optimizer = SGD
     
     print(f"开始并行训练 (workers={num_workers})...")
+    total_start_time = time.time()
+    step_size = batch_size * num_workers
+    num_steps_per_epoch = (len(x_train) + step_size - 1) // step_size
     
     for epoch in range(epochs):
+        epoch_start_time = time.time()
         # 打乱训练数据
         indices = list(range(len(x_train)))
         random.shuffle(indices)
-        
+        if epoch == 3:
+          optimizer = SGD  
         total_loss = 0
         num_batches = 0
         
-        # 每次处理 num_workers 个批次（数据并行）
-        step_size = batch_size * num_workers
+        # 每次处理 num_workers 个批次（数据并行），使用 tqdm 显示进度
+        pbar = tqdm(range(0, len(x_train), step_size),
+                    desc=f"Epoch {epoch + 1}/{epochs}",
+                    total=num_steps_per_epoch,
+                    unit="step")
         
-        for i in range(0, len(x_train), step_size):
+        for i in pbar:
             # 准备多个批次的数据
             batch_args = []
             for w in range(num_workers):
@@ -465,19 +522,9 @@ def train_parallel(num_workers=4, batch_size=32, learning_rate=0.01, epochs=5):
                     for i in range(len(avg_grads[layer_name]['b'])):
                         avg_grads[layer_name]['b'][i] /= num_results
             
-            # 设置聚合后的梯度并更新参数
-            # 清零梯度
-            for p in model.params:
-                if isinstance(p.grad, list):
-                    if isinstance(p.grad[0], list):
-                        p.grad = [[0.0 for _ in row] for row in p.grad]
-                    else:
-                        p.grad = [0.0 for _ in p.grad]
-                else:
-                    p.grad = 0.0
-            
-            # 设置聚合梯度
-            for layer_idx, layer_name in enumerate(['layer1', 'layer2', 'layer3']):
+            # === 主模型设置聚合梯度并更新参数 ===
+            # 直接设置聚合后的梯度（无需清零，因为是覆盖）
+            for layer_name in ['layer1', 'layer2', 'layer3']:
                 layer = getattr(model, layer_name)
                 layer.W.grad = avg_grads[layer_name]['W']
                 layer.b.grad = avg_grads[layer_name]['b']
@@ -490,10 +537,10 @@ def train_parallel(num_workers=4, batch_size=32, learning_rate=0.01, epochs=5):
             total_loss += avg_loss
             num_batches += 1
             
-            # 每50个步骤打印一次
-            if num_batches % 50 == 0:
-                print(f"Epoch {epoch + 1}, Step {num_batches}, Loss: {avg_loss:.4f}")
+            # 更新进度条显示当前损失
+            pbar.set_postfix({'loss': f'{avg_loss:.4f}'})
         
+        epoch_time = time.time() - epoch_start_time
         avg_loss = total_loss / num_batches if num_batches > 0 else 0
         
         # 在测试集上评估
@@ -506,9 +553,15 @@ def train_parallel(num_workers=4, batch_size=32, learning_rate=0.01, epochs=5):
             correct += sum(1 for p, y in zip(predictions, y_batch) if p == y)
         
         accuracy = correct / len(x_test) * 100
-        print(f"Epoch {epoch + 1}/{epochs}, Avg Loss: {avg_loss:.4f}, Test Accuracy: {accuracy:.2f}%")
+        elapsed_time = time.time() - total_start_time
+        avg_epoch_time = elapsed_time / (epoch + 1)
+        remaining_time = avg_epoch_time * (epochs - epoch - 1)
+        print(f"Epoch {epoch + 1}/{epochs} - {epoch_time:.1f}s - "
+              f"Avg Loss: {avg_loss:.4f}, Test Accuracy: {accuracy:.2f}%, "
+              f"ETA: {remaining_time/60:.1f}min")
     
-    print("训练完成!")
+    total_time = time.time() - total_start_time
+    print(f"训练完成! 总耗时: {total_time/60:.1f}分钟")
     
     # 保存模型参数
     model.save('mnist_model_parallel.json')

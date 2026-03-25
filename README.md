@@ -1,6 +1,6 @@
 # Dl里程
 ## 前言
-* 后续仅涉及需要前置仅导数知识，再无其他（放心食用），本次不会有对导数的数学推导，仅简单介绍。
+* 后续仅涉及需要前置仅导数知识，再无其他（放心食用），不会有对导数的数学推导，仅简单介绍。
 * 可根据标题跳过任一已知段落
 ## 预备知识
 > 详细还需自行复习一下，仅简单介绍
@@ -197,8 +197,8 @@ b = max(min(b - lr * grad_b, 220), 180)      # 约束在[180, 220]
 引入非线性：激活函数打破了纯线性组合的约束，使得每个神经元具备了表达非线性关系的能力。
 构造复杂函数：通过将许多这样的“线性变换 + 非线性激活”单元层层堆叠，神经网络就像用乐高积木一样，可以组合构造出极其复杂、高度非线性的函数，用以建模真实世界中纷繁复杂的数据关系。
 因此，神经网络并非完全抛弃了简单的线性模型，而是以它为基石，通过巧妙地引入并堆叠“非线性激活”层，最终获得了逼近任意复杂函数的强大能力。这解决了单纯使用高次多项式所面临的诸多困境，成为处理现代复杂预测任务的利器。
-![](2.2_3D地形拟合(FCN)\activation_functions_visualization.gif)
-![](2.2_3D地形拟合(FCN)\activation_functions_comparison.png)
+![](2.1_3D地形拟合(FCN)\activation_functions_visualization.gif)
+![](2.1_3D地形拟合(FCN)\activation_functions_comparison.png)
 ##### 使用神经元拟合
 1. 模拟炼丹时丹药大小和药效的关系
 > 定义条件：0.4 到 1.2 之间有效(1)，否则无效(0)
@@ -360,13 +360,29 @@ def train():
 他每走一步之前，都要蹲下来把整座山上所有的石子、坑洼全部摸一遍，计算出一个“绝对精确”的平均坡度，然后才肯迈出一小步。优点是走得极其稳健。只要地形（损失函数）是平滑的凸函数，他一定能走到最深的山谷，绝不绕路。缺点也很明显，太慢了！ 如果山上有 100 万颗石子（100 万条数据），他每走一步都要摸 100 万次。在数据量巨大的今天，这种人往往还没走到山脚，天就亮了（计算资源耗尽）。
 * 随机梯度下降 (Stochastic Gradient Descent, SGD)
 这种就像是低头只看当前脚下的坡度，就立刻往那个方向蹦一步。优点是极快！ 别人还在摸第一遍坡度时，他可能已经蹦到半山腰了。而且因为他乱蹦，有时反而能跳出一些小的“小土坑”（局部最优解），蹦到更深的山谷去。缺点就是走位极其风骚（不稳定）。 他的路线是锯齿形的，甚至会往山上跳。即便到了谷底，他也不会停下，而是在村口疯狂转圈，很难真正定死在最深点。适合在线学习，或者数据量大到离谱，求快不求精的时候。
-* 小批量随机梯度下降 (Mini-Batch SGD)
+* 小批量随机梯度下降 (Mini-Batch SGD 目前主流的所属的SGD基本都是指的Mini-Batch SGD)
 这是目前 AI 领域（深度学习）最主流的方法。他折中了前两位的方法：每次随手查看周围部分坡度（比如面前90度），算出平均坡度，然后迈一步。优点（真香定律）
 又快又稳，而且硬件友好，现代电脑的显卡（GPU）最擅长“一次性处理一小堆数据”。处理 1个坡度和处理 128个坡度时间几乎一样，那为什么不处理 128 个呢？
 缺点：你需要额外操心一个参数——Batch Size。抓多了变BGD，抓少了SGD。几乎适用于所有的深度学习场景（CNN、GPT、炼丹必备）。
 
+* adam 优化器
+SGD的`w = w + alpha * dw`需要手动调整全局学习率，Adam通过二阶矩估计自动调整每个参数的学习率,对梯度平方进行指数加权平均.
+动量梯度下降：以下图中的红色为例，adam会使用上次梯度方向和本次相加（也就是会有看一下），如果是同方向则下次步子更长，如果是反方向则减少。最终使其为绿色的拟合路线。实际的公式为`v_t = β * v(t-1) + (1 - β) * dw_t`(v_t 本次步长,β 一个超参数一般为0.9 主要为了减少历史数据的影响，使最近的1个数据影响最大，历史的影响最小，dw_t 本次梯度)
+![](other\5d3e3235-a346-43cd-83be-25c392728998.png)
+![](other\bb7a0622-fa8b-4fc3-8163-45fa23ec7a57.png)
+RMSprop：目前还有一个问题，在越来越接近中心点，当你向中心收敛时，在陡峭方向上的dw依然很大。如果你为了在平滑方向前进设置了较大的学习率，那么在陡峭方向上，固定的alpha * dw 就会导致w在两面山壁之间反复横跳，无法沉入谷底。所以我们让 `w = w + alpha * dw / ?` ，？就是我们需要寻找的值，期望它可以使`alpha * dw `大变小,小变大.这个数还需要代表当前坡度有多陡。`s_t = β * s(t-1) + (1-β)(alpha * dw)²`（平方消除正负问题），
 
-
+adam: 最终的出`w = w + alpha * dw/（√s_t + e）`(根号使为了取消平方带来的增长，e是一个非常非常小的数字 防止分母为0)，目前问题是在第一步时由于上一步梯度为0，而导致下降缓慢（上一步0提到会导致第一步梯度小，从而影响后续）,解决方法就是寻找如何使其自适应。（以v_t为例）
+```
+# 第一步 v_0 = 0  假设 dw_t = 20 (当前梯度)  β = 0.9
+v_t = β * v(t-1) + (1 - β) * dw_t
+v_1 = 0.9 * 0 + 0.1 * 20 = 2 
+# 我们期望 v_1 为初始的20 不要受上一步影响，可以发现除以 0.1 就可以还原也就是 1 - β，那v_2，v_3呢
+v_1 = β * v_0 +  (1 - β) * dw_t =  (1 - β) * dw_t
+v_2 = β * v_1 + (1 - β) * dw_t = β * (1 - β) * dw_t + (1 - β) * dw_t  = (1 - β²)dw_t
+v_3 = .... = (1 - β³)dw_t
+```
+所以最终的公式为`v_t = (β * v(t-1) + (1 - β) * dw_t)/( 1 - β^t)`(β^t 是β的t次方)
 ### 2.2 3D地形拟合
 本次拟合为 z = x**2 - y**2
 本次采用激活函数为Relu
@@ -438,3 +454,458 @@ class SimpleFCN:
 ```
 
 ![](2.2_3D地形拟合(FCN)\fcn_3d_terrain_visualizer.gif)
+### 3.1 工程化
+
+后续需要多次使用，并且层级越来越多不可能全部手动取硬编码前向传播（计算预测值与损失函数）和反向传播（梯度计算方法），所以我们通常会希望他会自动进行这些繁琐的步骤。
+1. 创建一个基础数据处理类来作为基础（不用思考张量标量等名词有空再去补习，临时就当数字和数组标量（0D）→ 向量（1D）→ 矩阵（2D）→ 高维张量（3D+））
+```python
+class Tensor:
+    def __init__(self, data, _prev=(), _op='', label=''):
+        # 存储张量的实际数据
+        self.data = data
+        # 初始化梯度：标量为0，列表/矩阵为同形状零值
+        if isinstance(data, (int, float)):
+            self.grad = 0.0
+        elif isinstance(data, list):
+            if not data:
+                self.grad = []
+            elif isinstance(data[0], list):
+                self.grad = [[0.0 for _ in row] for row in data]
+            else:
+                self.grad = [0.0 for _ in data]
+        else:
+            raise ValueError("数据必须是标量或列表")
+            
+        # 反向传播函数，默认为空操作
+        self._backward = lambda: None
+        # 前驱节点集合，用于构建计算图
+        self._prev = set(_prev)
+        # 操作符名称，用于调试和显示
+        self._op = _op
+        # 张量标签，便于识别
+        self.label = label
+```
+2. 添加基础操作函数的反向传播(文件过大仅示例实际参考代码库文件tensor.py)
+```python
+    def matmul(self, other):
+        # 确保other是Tensor类型
+        other = self._ensure_tensor(other)
+        # 获取两个张量的数据
+        A, B = self.data, other.data
+        
+        # 验证输入类型
+        if not (isinstance(A, list) and isinstance(B, list)):
+            raise ValueError("矩阵乘法要求两个操作数都是列表形式的矩阵")
+        
+        # 简单处理向量转矩阵
+        if A and not isinstance(A[0], list): A = [A]
+        if B and not isinstance(B[0], list): B = [[x] for x in B]
+        
+        # 验证矩阵非空
+        if not A or not B or not A[0] or not B[0]:
+            raise ValueError("矩阵不能为空")
+        
+        # 获取矩阵维度信息
+        rows_A, cols_A = len(A), len(A[0])
+        rows_B, cols_B = len(B), len(B[0])
+        # 验证矩阵维度是否匹配
+        if cols_A != rows_B:
+            raise ValueError(f"矩阵维度不匹配: 第一个矩阵的列数({cols_A}) != 第二个矩阵的行数({rows_B})")
+
+        # 执行矩阵乘法运算
+        out_data = [[sum(A[i][k] * B[k][j] for k in range(cols_A)) for j in range(cols_B)] for i in range(rows_A)]
+        # 创建新的Tensor对象
+        out = Tensor(out_data, (self, other), '@')
+
+        def _backward():
+            # 获取输出张量的梯度
+            g = out.grad
+            # 计算A的梯度：dA = g @ B.T
+            B_T = [[B[j][i] for j in range(rows_B)] for i in range(cols_B)]
+            dA = [[sum(g[i][k] * B_T[k][j] for k in range(cols_B)) for j in range(cols_A)] for i in range(rows_A)]
+            
+            # 计算B的梯度：dB = A.T @ g
+            A_T = [[A[j][i] for j in range(rows_A)] for i in range(cols_A)]
+            dB = [[sum(A_T[i][k] * g[k][j] for k in range(rows_A)) for j in range(cols_B)] for i in range(rows_B)]
+
+            # 更新A的梯度
+            if isinstance(self.grad, list) and isinstance(self.grad[0], list):
+                for i in range(rows_A):
+                    for j in range(cols_A): self.grad[i][j] += dA[i][j]
+            # 更新B的梯度
+            if isinstance(other.grad, list) and isinstance(other.grad[0], list):
+                for i in range(rows_B):
+                    for j in range(cols_B): other.grad[i][j] += dB[i][j]
+        # 设置反向传播函数
+        out._backward = _backward
+        return out
+```
+3. 实现通用优化器（仅核心代码）
+```python
+class SGD(Optimizer):
+    def step(self):
+        """执行一步梯度更新"""
+        for p in self.params:
+            if p.grad is None: continue
+            
+            if isinstance(p.data, list):
+                if isinstance(p.data[0], list):
+                    # 更新二维参数矩阵
+                    p.data = [[p.data[i][j] - self.lr * p.grad[i][j] for j in range(len(p.data[0]))] for i in range(len(p.data))]
+                else:
+                    # 更新一维参数向量
+                    p.data = [p.data[i] - self.lr * p.grad[i] for i in range(len(p.data))]
+            else:
+                # 更新标量参数
+                p.data = p.data - self.lr * p.grad
+
+class Adam(Optimizer):
+    def step(self):
+        """执行一步梯度更新"""
+        self.t += 1  # 更新步数计数器
+        for idx, p in enumerate(self.params):
+            if p.grad is None: continue
+            
+            curr_m = self.m[idx]  # 获取当前参数对应的一阶矩估计
+            curr_v = self.v[idx]  # 获取当前参数对应的二阶矩估计
+            
+            if isinstance(p.data, (int, float)):
+                # 处理标量参数
+                new_d, new_m, new_v = self._update_val(p.data, p.grad, curr_m, curr_v)
+                p.data = new_d
+                self.m[idx] = new_m
+                self.v[idx] = new_v
+                
+            elif isinstance(p.data, list):
+                if isinstance(p.data[0], list):
+                    # 处理二维参数矩阵
+                    new_d, new_m, new_v = self._update_list_2d(p.data, p.grad, curr_m, curr_v)
+                    p.data = new_d
+                    self.m[idx] = new_m
+                    self.v[idx] = new_v
+                else:
+                    # 处理一维参数向量
+                    new_d, new_m, new_v = self._update_list_1d(p.data, p.grad, curr_m, curr_v)
+                    p.data = new_d
+                    self.m[idx] = new_m
+                    self.v[idx] = new_v
+```
+4. 定义层级模型
+```python
+class Layer:
+    """神经网络的基本层类
+    实现了一个全连接层，包含权重和偏置参数，
+    并定义了前向传播的计算逻辑。
+    """
+    def __init__(self, nin, nout):
+        """初始化层
+        参数:
+            nin: 输入特征的维度
+            nout: 输出特征的维度
+        """
+        # 初始化权重矩阵 (nin, nout) 和偏置向量 (nout,)
+        self.W = Tensor(randn([nin, nout]), label='W')  # 权重矩阵，使用Xavier初始化
+        self.b = Tensor(randn([nout]), label='b')  # 偏置向量，使用Xavier初始化
+        # 收集所有可学习参数
+        self.params = [self.W, self.b]
+
+    def __call__(self, x):
+        """前向传播计算
+        
+        参数:
+            x: 输入张量，形状为 (Batch, nin)
+            
+        返回:
+            输出张量，形状为 (Batch, nout)
+        """
+        # 矩阵乘法: x @ W
+        # x的形状是 (B, nin)，W的形状是 (nin, nout)，结果形状是 (B, nout)
+        out = x.matmul(self.W)
+        
+        # 广播偏置: 将形状为 (nout,) 的偏置扩展为 (B, nout)
+        B = len(out.data)  # 获取批量大小
+        K = len(self.b.data)  # 获取偏置的维度
+        
+        # 构造与输出形状相同的偏置张量
+        b_tensor_data = []
+        for i in range(B):
+            b_tensor_data.append(self.b.data)  # 为每个样本复制偏置数据
+        
+        # 创建偏置张量
+        b_tensor = Tensor(b_tensor_data)
+        # 返回线性变换结果: x @ W + b
+        return out + b_tensor
+```
+5. 实现拟合`墨西哥帽`验证
+```python
+def mexican_hat(x, y):
+    """
+    墨西哥帽函数 (Ricker Wavelet 2D)
+    公式: z = (1 - r^2) * exp(-r^2 / 2)
+    特征: 中间一个高峰，周围一圈凹陷，远处趋于0
+    """
+    r2 = x*x + y*y
+    return (1.0 - r2) * math.exp(-r2 / 2.0)
+class RegressionNet:
+    """
+    一个简单的全连接回归网络
+    结构: 输入层 -> 隐藏层 (ReLU) -> ... -> 输出层 (线性)
+    """
+    def __init__(self, input_dim=2, hidden_dims=[40, 40], output_dim=1):
+        self.layers = []
+        # 构建网络层维度列表，例如 [2, 40, 40, 1]
+        dims = [input_dim] + hidden_dims + [output_dim]
+        
+        # 依次创建全连接层
+        for i in range(len(dims) - 1):
+            nin, nout = dims[i], dims[i+1]
+            self.layers.append(Layer(nin, nout))
+            
+        # 收集所有参数 (权重 W 和 偏置 b) 以便优化器更新
+        self.params = []
+        for layer in self.layers:
+            self.params.extend(layer.params)
+
+    def forward(self, x_tensor):
+        """
+        前向传播：计算预测值
+        """
+        out = x_tensor
+        for i, layer in enumerate(self.layers):
+            out = layer(out)
+            # 除了最后一层（输出层），其他层都加 ReLU 激活函数
+            # 输出层不加激活，因为我们要拟合任意范围的连续值
+            if i < len(self.layers) - 1:
+                out = out.relu()
+        return out
+
+    def train_step(self, x_data, y_true_val, lr):
+        """
+        单个样本的训练步骤：前向 -> 计算损失 -> 反向传播 -> 参数更新
+        
+        参数:
+            x_data: 输入列表 [x, y]
+            y_true_val: 真实值列表 [z]
+            lr: 学习率
+            
+        返回:
+            loss_value: 当前样本的损失值 (标量)
+        """
+        # 1. 将原始数据转换为 Tensor 对象
+        # 形状: (1, 2) 表示 1 个样本，2 个特征
+        x = Tensor([x_data])       
+        # 形状: (1, 1) 表示 1 个样本，1 个目标值
+        y_true = Tensor([y_true_val]) 
+        
+        # 2. 前向传播
+        y_pred = self.forward(x)
+        
+        # 3. 计算损失 (均方误差 MSE)
+        # Loss = (pred - true)^2
+        diff = y_pred - y_true
+        loss = (diff * diff).sum() # 对批次内所有元素求和
+        
+        # 4. 清零梯度
+        # 在反向传播前，必须将所有参数的梯度归零，否则梯度会累加
+        for p in self.params:
+            p.zero_grad()
+            
+        # 5. 反向传播
+        # 自动计算损失对所有参数的梯度
+        loss.backward()
+        
+        # 6. 参数更新 (随机梯度下降 SGD)
+        # 公式: w = w - lr * dw
+        for p in self.params:
+            # 处理权重矩阵 (2D 列表)
+            if isinstance(p.data, list) and len(p.data) > 0 and isinstance(p.data[0], list):
+                for r in range(len(p.data)):
+                    for c in range(len(p.data[0])):
+                        p.data[r][c] -= lr * p.grad[r][c]
+            # 处理偏置向量 (1D 列表)
+            elif isinstance(p.data, list):
+                for i in range(len(p.data)):
+                    p.data[i] -= lr * p.grad[i]
+            else:
+                # 处理标量情况
+                p.data -= lr * p.grad
+                
+        return loss.data
+```
+![](3.1_工程化基础\fitting_process.gif)
+6. 进阶实现`Hello Word` MNIST 手写数字识别(https://github.com/fgnt/mnist)
+```python
+class MnistModel():
+    def __init__(self):
+        self.layer1 = Layer(28 * 28, 128)
+        self.layer2 = Layer(128, 128)
+        self.layer3 = Layer(128, 10)  # 输出10个类别（数字0-9）
+        
+        # 收集所有可学习参数
+        self.params = []
+        for layer in [self.layer1, self.layer2, self.layer3]:
+            self.params.extend(layer.params)
+            
+        # 用于记录训练过程中的损失值
+        self.loss_history = []
+        
+    def forward(self, x_tensor, apply_softmax=False):
+        """前向传播计算
+        
+        参数:
+            x_tensor: 输入张量，形状为 (Batch, 784)
+            apply_softmax: 是否在输出层应用 softmax（默认 False，保持向后兼容）
+            
+        返回:
+            输出张量，形状为 (Batch, 10)
+        """
+        # 第一层前向传播
+        h1 = self.layer1(x_tensor)
+        
+        # 应用ReLU激活函数
+        h1 = h1.relu()
+        
+        # 第二层前向传播
+        h2 = self.layer2(h1)
+        # 应用ReLU激活函数
+        h2 = h2.relu()
+        
+        # 输出层前向传播
+        out = self.layer3(h2)
+        
+        # 应用 softmax 激活函数
+        if apply_softmax:
+            out = out.softmax()
+        
+        return out
+
+    def train_step(self, X_data, z_data, lr, optim_class):
+        """单步训练
+        
+        参数:
+            X_data: 输入数据，形状为 (Batch, 784)，每张图片展平为784个像素
+            z_data: 标签数据，形状为 (Batch,)，值为0-9的整数
+            lr: 学习率
+            optim_class: 优化器类
+            
+        返回:
+            当前步的损失值
+        """
+        # 将数据转换为Tensor
+        X = Tensor(X_data)  # 输入数据，形状为 (Batch, 784)
+        # 将标签转换为one-hot编码，形状为 (Batch, 10)
+        z_true_data = []
+        for label in z_data:
+            one_hot = [0.0] * 10
+            one_hot[int(label)] = 1.0
+            z_true_data.append(one_hot)
+        z_true = Tensor(z_true_data)
+        
+        # 前向传播（输出层 logits，不应用 softmax）
+        z_logits = self.forward(X)
+        
+        # 计算损失：使用交叉熵损失（内部自动应用 softmax）
+        loss = z_logits.cross_entropy_loss(z_true)
+        
+        # 清零梯度
+        for p in self.params:
+            if isinstance(p.grad, list):
+                if isinstance(p.grad[0], list):
+                    # 清零二维梯度
+                    p.grad = [[0.0 for _ in row] for row in p.grad]
+                else:
+                    # 清零一维梯度
+                    p.grad = [0.0 for _ in p.grad]
+            else:
+                # 清零标量梯度
+                p.grad = 0.0
+                
+        # 反向传播
+        loss.backward()
+        
+        # 优化器更新参数
+        # 注意：这里为了演示方便，每次训练步都创建一个新的优化器实例
+        # 在实际代码中，应该保持优化器实例
+        opt = optim_class(self.params, lr=lr)
+        opt.step()
+        
+        # 记录损失值
+        self.loss_history.append(loss.data)
+        return loss.data
+```
+在启动训练时会发现预计大约10个小时,原因是纯python实现原生列表嵌套循环，反向传播计算效率低。
+而且存在多个问题：
+    梯度计算逻辑复杂，存在大量重复的类型判断代码
+    并行训练中每次迭代都创建新优化器实例，效率低下
+    未实现Tensor池化，重用内存
+    大量的数据迁移导致gc占比大
+
+```
+训练集大小: 60000
+测试集大小: 10000
+开始并行训练 (workers=6)...
+Epoch 1/3:   0%|                                        | 0/313 [00:00<?, ?step/s]lEpoch 1/3:   0%|                 | 1/313 [01:19<3:13:17, 49.48s/step, loss=2.4057]
+```
+### 3.2 增加numpy使用
+使用numpy可以加速计算，numpy底层使用C/Fortran优化，向量化操作，对数组使用连续内存存储，数据类型明确，使内存效率提升，支持多线程BLAS库（如OpenBLAS、MKL）可使并行训练加速。
+逻辑未修改仅做numpy的替换所以不展示代码感兴趣可以看源码
+训练结果
+```
+加载MNIST数据集...
+训练集大小: 60000
+测试集大小: 10000
+开始并行训练 (workers=6)...
+Epoch 1/2: 100%|█████████████████| 313/313 [28:04<00:00,  5.38s/step, loss=0.3687] 
+Epoch 1/2 - 1684.5s - Avg Loss: 1.0007, Test Accuracy: 90.09%, ETA: 28.1min        
+Epoch 2/2: 100%|█████████████████| 313/313 [30:44<00:00,  5.89s/step, loss=0.2869] 
+Epoch 2/2 - 1844.1s - Avg Loss: 0.3487, Test Accuracy: 92.28%, ETA: 0.0min
+训练完成! 总耗时: 58.8分钟
+模型参数已保存到: mnist_model.json
+### test
+加载测试数据集...
+测试集大小: 10000
+模型参数已从 3.2_工程化加速/mnist_model.json 加载
+开始测试...
+
+总体准确率: 92.28% (9228/10000)
+
+各类别准确率:
+  数字 0: 97.86% (959/980)
+  数字 1: 97.09% (1102/1135)
+  数字 2: 88.08% (909/1032)
+  数字 3: 88.22% (891/1010)
+  数字 4: 94.20% (925/982)
+  数字 5: 88.12% (786/892)
+  数字 6: 95.20% (912/958)
+  数字 7: 93.87% (965/1028)
+  数字 8: 93.43% (910/974)
+  数字 9: 86.12% (869/1009)
+```
+
+
+* softmax 函数
+简单来说，Softmax 的作用就是把一群“乱七八糟”的数值，转化成 10 个 0 到 1 之间、且加起来等于 1 的概率值。
+```
+# 数学公式
+z = e ^ z_i /  Σ（j） e ^ z_j  
+z 为最终输出的概率值
+e 是 常数 ≈ 2.71828
+e ^ z_i 是e的第i个输入值的指数幂，让大的数字变得非常大，小的数字变得很小。这能起到“强者愈强”的效果。还可以无论原始值是多少（甚至是负数），经过e ^ z_i 后都会变成正数。
+z_j   z_j 是Σ（j）求和时 第几个给定值
+举例给定三个数字  2  5  1
+经过 Softmax：
+    计算指数： e ^ 2 ≈ 7.4 ; e ^ 5 ≈ 148.4 ; e ^ 1 ≈ 2.7
+    计算总和： 158.5
+    计算概率
+     2 > 7.4/158.5 = 4.6%
+     5 > 148.4/158.5 = 93.6%
+     1 > 2.7/158.5 = 1.7%
+```
+![](3.2_工程化加速\predictions.png)
+### 4 GPT(Generative Pre-trained Transformer 生成式预训练变换器)
+
+## 参考
+https://github.com/karpathy/nanoGPT
+https://arxiv.org/abs/1412.6980
+https://www.youtube.com/watch?v=spbBQshdhL4
+https://www.youtube.com/watch?v=mCz9X-TGyNc&list=PL5gSAp1ckvYTfZwgRilOs7Y6uC_KBqhTp

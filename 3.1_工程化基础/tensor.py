@@ -26,9 +26,49 @@ class Tensor:
         self._op = _op
         # 张量标签，便于识别
         self.label = label
+        # 是否保留计算图的标记
+        self._retain_graph = True
     
-    def zero_grad(self):
-        """清零梯度"""
+    def _validate_grad_shape(self):
+        """验证梯度形状与数据形状是否匹配，避免广播错误"""
+        if isinstance(self.data, (int, float)):
+            if isinstance(self.grad, list):
+                raise ValueError(
+                    f"梯度形状不匹配: 数据是标量 {type(self.data).__name__}, "
+                    f"但梯度是列表 {type(self.grad).__name__}"
+                )
+        elif isinstance(self.data, list):
+            if not isinstance(self.grad, list):
+                raise ValueError(
+                    f"梯度形状不匹配: 数据是列表, 但梯度是 {type(self.grad).__name__}"
+                )
+            if len(self.data) != len(self.grad):
+                raise ValueError(
+                    f"梯度形状不匹配: 数据长度 {len(self.data)}, 梯度长度 {len(self.grad)}"
+                )
+            if self.data and isinstance(self.data[0], list):
+                if not self.grad or not isinstance(self.grad[0], list):
+                    raise ValueError(
+                        "梯度形状不匹配: 数据是二维列表, 但梯度不是"
+                    )
+                for i, (data_row, grad_row) in enumerate(zip(self.data, self.grad)):
+                    if len(data_row) != len(grad_row):
+                        raise ValueError(
+                            f"梯度形状不匹配: 第 {i} 行数据长度 {len(data_row)}, "
+                            f"梯度长度 {len(grad_row)}"
+                        )
+            elif self.data and not isinstance(self.data[0], list):
+                if self.grad and isinstance(self.grad[0], list):
+                    raise ValueError(
+                        "梯度形状不匹配: 数据是一维列表, 但梯度是二维列表"
+                    )
+    
+    def zero_grad(self, release_graph=True):
+        """清零梯度，可选择是否释放计算图
+        
+        参数:
+            release_graph: 是否释放计算图节点，默认为 True
+        """
         if isinstance(self.data, (int, float)):
             self.grad = 0.0
         elif isinstance(self.data, list):
@@ -38,6 +78,12 @@ class Tensor:
                 self.grad = [[0.0 for _ in row] for row in self.data]
             else:
                 self.grad = [0.0 for _ in self.data]
+        
+        # 释放计算图
+        if release_graph:
+            self._prev = set()
+            self._backward = lambda: None
+            self._retain_graph = False
 
     def __repr__(self):
         return f"Tensor(data={self.data}, grad={self.grad}, op={self._op})"
@@ -207,8 +253,10 @@ class Tensor:
             raise ValueError("矩阵乘法要求两个操作数都是列表形式的矩阵")
         
         # 简单处理向量转矩阵
-        if A and not isinstance(A[0], list): A = [A]
-        if B and not isinstance(B[0], list): B = [[x] for x in B]
+        if A and not isinstance(A[0], list):
+            A = [A]
+        if B and not isinstance(B[0], list):
+            B = [[x] for x in B]
         
         # 验证矩阵非空
         if not A or not B or not A[0] or not B[0]:
@@ -240,11 +288,13 @@ class Tensor:
             # 更新A的梯度
             if isinstance(self.grad, list) and isinstance(self.grad[0], list):
                 for i in range(rows_A):
-                    for j in range(cols_A): self.grad[i][j] += dA[i][j]
+                    for j in range(cols_A): 
+                        self.grad[i][j] += dA[i][j]
             # 更新B的梯度
             if isinstance(other.grad, list) and isinstance(other.grad[0], list):
                 for i in range(rows_B):
-                    for j in range(cols_B): other.grad[i][j] += dB[i][j]
+                    for j in range(cols_B):
+                        other.grad[i][j] += dB[i][j]
         # 设置反向传播函数
         out._backward = _backward
         return out
@@ -597,7 +647,12 @@ class Tensor:
         out._backward = _backward
         return out
     
-    def backward(self):
+    def backward(self, retain_graph=False):
+        """反向传播，可选择是否保留计算图
+        
+        参数:
+            retain_graph: 是否保留计算图用于多次反向传播，默认为 False
+        """
         # 拓扑排序列表，用于按正确顺序执行反向传播
         topo = []
         # 已访问节点集合，避免重复访问
@@ -608,7 +663,8 @@ class Tensor:
             if v not in visited:
                 visited.add(v)
                 # 递归访问前驱节点
-                for child in v._prev: build(child)
+                for child in v._prev:
+                    build(child)
                 # 添加当前节点到拓扑排序列表
                 topo.append(v)
         build(self)
@@ -625,3 +681,17 @@ class Tensor:
         # 按逆序执行反向传播
         for node in reversed(topo):
             node._backward()
+            # 梯度检查
+            try:
+                node._validate_grad_shape()
+            except ValueError as e:
+                raise ValueError(
+                    f"反向传播时梯度形状验证失败 (节点: {node._op}, 标签: {node.label}):\n{e}"
+                )
+        
+        # 释放计算图（除非明确要求保留）
+        if not retain_graph:
+            for node in topo:
+                node._prev = set()
+                node._backward = lambda: None
+                node._retain_graph = False
