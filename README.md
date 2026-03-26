@@ -904,5 +904,330 @@ z_j   z_j 是Σ（j）求和时 第几个给定值
      1 > 2.7/158.5 = 1.7%
 ```
 ![](3.2_工程化加速\predictions.png)
+> 仅为了验证，正常来说对与图像如果不采用Transformer架构，一般会使用卷积神经网络(CNN)来拟合效果会更好.下次实现（新建文件夹）。
+> 卷积神经网络的核心就是卷积核，其核心思想是通过卷积操作自动提取数据的局部特征，并通过层次化结构逐步组合这些特征。
+> 它本质上是一个可学习的N*N的权重矩阵，通过在输入数据上滑动窗口并进行卷积运算，自动提取局部空间特征。这种设计的巧妙之处在于同一个卷积核遍历整张图，极大地减少了模型参数，并且无论猫在图像的左侧还是右侧，相同的卷积核都能捕捉到它的特征。通过多层叠加，网络能从最初的‘找线条’进化到最后的‘看懂整只猫’。”
+![](cnn\ryqyum.gif)
+> 举例：假设我们使用第一个列为1 第二列为0 第二列为-1的卷积核对图像进行卷积，这个卷积核就可以提取出竖向的特征。（实际都是经过训练的抽象特征）
+![](other\ME1774511673131.png)
 ### 4 GPT(Generative Pre-trained Transformer 生成式预训练变换器)
+#### 4.1 embedding 嵌入
+Embedding（嵌入）是一种将离散、高维的符号数据（如单词、字符、类别）转换为连续、低维的实数向量的思想。
+想象你要让电脑处理“猫”和“狗”这两个词，旧方法：
+* 独热编码 (One-Hot Encoding)
+    给每个词一个编号：猫=[1,0,0]，狗=[0,1,0]，苹果=[0,0,1]。
+    如果有 10 万个词，每个词向量长度就是 10 万，其中只有一个 1，全是 0。
+    在数学上，“猫”和“狗”的距离与“猫”和“苹果”的距离是一样的。电脑看不出猫和狗更像。
+想象一个三维空间，三个轴分别是：[是否可爱, 是否会飞, 是否是动物]。
+    猫 的坐标可能是：[0.9, 0.0, 0.9] (可爱，不会飞，是动物)
+    小鸟 的坐标可能是：[0.7, 0.9, 0.9] (可爱，会飞，是动物)
+    石头 的坐标可能是：[0.1, 0.0, 0.0] (不可爱，不会飞，不是动物)
+这些坐标（维度）不是人定义的，而是模型在训练过程中自己学出来的。模型发现“猫”和“狗”经常出现在类似的句子（上下文）里，就会自动把它们画在坐标系中邻近的位置。
+```
+# 准备数据
+    sentences = [
+        "国王 管理 国家",
+        "男人 治理 国家",
+        "女人 统治 国家",
+        "国王 是 君主",
+        "男人 是 统治者",
+        "女人 是 统治者",
+        "国王 拥有 权力",
+        "男人 拥有 权力",
+        "女人 拥有 权力",
+        "国王 很 尊贵",
+        "男人 很 尊贵",
+        "女人 很 尊贵",
+        "国王 坐 在 王座",
+        "男人 坐 在 椅子",
+        "女人 坐 在 王座",
+        "王后 是 女王",
+        "女王 统治 王国",
+        "王后 很 尊贵",
+    ]
+      
+    # 收集所有词汇(构建词表)
+    word_counts = {}
+    for sentence in sentences:
+        words = sentence.split()
+        for word in words:
+            word_counts[word] = word_counts.get(word, 0) + 1
+    
+    return sentences, word_counts
+# 构建模型
+class Word2VecTrainer:
+    """Word2Vec训练器"""
+    
+    def __init__(self, vocab_size, embedding_dim, learning_rate=0.01):
+        """
+        初始化训练器
+        
+        参数:
+            vocab_size: 词汇表大小
+            embedding_dim: 词向量维度
+            learning_rate: 学习率
+        """
+        self.vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+        
+        # 创建词嵌入矩阵 (使用Xavier初始化)
+        scale = np.sqrt(1.0 / embedding_dim)
+        self.target_embeddings = Tensor(np.random.uniform(-scale, scale, (vocab_size, embedding_dim)))
+        self.context_embeddings = Tensor(np.random.uniform(-scale, scale, (vocab_size, embedding_dim)))
+        
+        # 优化器
+        params = [self.target_embeddings, self.context_embeddings]
+        self.optimizer = Adam(params, lr=learning_rate)
+        
+        # 词表
+        self.word_to_idx = {}
+        self.idx_to_word = {}
+```
+核心训练逻辑
+```python
+    for epoch in range(epochs):
+        total_loss = 0
+        
+        for center_idx, ctx_idx in training_pairs:
+            # 获取中心词和上下文词的嵌入向量
+            center_emb = trainer.target_embeddings.data[center_idx]  # (embedding_dim,)
+            ctx_emb = trainer.context_embeddings.data[ctx_idx]  # (embedding_dim,)
+            
+            # 计算点积相似度
+            similarity = np.dot(center_emb, ctx_emb)
+            
+            # 使用sigmoid将相似度转换为概率
+            prob = 1.0 / (1.0 + np.exp(-similarity))
+            
+            # 目标：让相关词的对相似度接近1
+            target = 1.0
+            
+            # 简单的损失函数 (MSE)
+            loss = (prob - target) ** 2
+            total_loss += loss
+            
+            # 手动计算梯度
+            # d_loss/d_prob = 2 * (prob - target)
+            # d_prob/d_similarity = prob * (1 - prob)
+            # d_similarity/d_center_emb = ctx_emb
+            # d_similarity/d_ctx_emb = center_emb
+            
+            d_loss_d_prob = 2 * (prob - target)
+            d_prob_d_sim = prob * (1 - prob)
+            d_sim_d_center = ctx_emb
+            d_sim_d_ctx = center_emb
+            
+            grad_center = d_loss_d_prob * d_prob_d_sim * d_sim_d_center
+            grad_ctx = d_loss_d_prob * d_prob_d_sim * d_sim_d_ctx
+            
+            # 累加梯度
+            trainer.target_embeddings.grad[center_idx] += grad_center
+            trainer.context_embeddings.grad[ctx_idx] += grad_ctx
+        
+        # 更新参数
+        trainer.optimizer.step()
+        trainer.optimizer.zero_grad()
+```
+最终结果
+```
+============================================================
+词向量训练 - 经典样例：国王 - 男人 + 女人 ≈ 女王
+============================================================
 
+词汇表: ['国王', '管理', '国家', '男人', '治理', '女人', '统治', '是', '君主', '统
+治者', '拥有', '权力', '很', '尊贵', '坐', '在', '王座', '椅子', '王后', '女王', '
+王国']
+词汇表大小: 21
+
+训练样本数: 78
+
+开始训练 (500 轮)...
+Epoch 100/500, Loss: 0.000000
+Epoch 200/500, Loss: 0.000000
+Epoch 300/500, Loss: 0.000000
+Epoch 400/500, Loss: 0.000000
+Epoch 500/500, Loss: 0.000000
+
+训练完成!
+
+============================================================
+测试词向量类比
+============================================================
+[OK] '国王' 在词表中 (索引: 0)
+[OK] '男人' 在词表中 (索引: 3)
+[OK] '女人' 在词表中 (索引: 5)
+[OK] '女王' 在词表中 (索引: 19)
+
+计算: 国王 - 男人 + 女人
+
+找到最相似的词:
+  国王: 0.9216
+  女人: 0.8032
+  男人: 0.5271
+  国家: 0.4991
+  王国: 0.4419
+
+与 '女王' 的余弦相似度: 0.4333
+
+----------------------------------------
+其他词向量测试:
+
+男人 - 女人 + 国王:
+  国王: 0.8778
+  男人: 0.8530
+  女人: 0.7347
+
+国王 - 王座 + 椅子:
+  国王: 0.9928
+  女人: 0.8673
+  男人: 0.7624
+
+============================================================
+词嵌入向量 (前3维)
+============================================================
+国王: [-1.798, -0.180, 0.313...]
+管理: [1.330, 1.011, -1.354...]
+国家: [-1.488, -1.483, 1.015...]
+男人: [-0.018, 0.943, 0.687...]
+治理: [1.570, 1.505, -1.398...]
+女人: [-1.286, 0.820, 1.565...]
+统治: [1.474, 1.461, -0.764...]
+是: [0.518, 1.243, -1.376...]
+君主: [-1.297, 1.425, 1.435...]
+统治者: [-1.381, 1.398, 1.274...]
+拥有: [-1.193, 0.216, -1.401...]
+权力: [1.235, -1.299, -1.325...]
+很: [0.495, 1.175, -1.087...]
+尊贵: [1.433, -1.451, 0.913...]
+坐: [-1.186, 1.481, -1.272...]
+在: [-1.400, 1.549, -1.444...]
+王座: [-1.294, 1.352, 0.169...]
+椅子: [-1.161, 1.414, 0.002...]
+尊贵: [1.433, -1.451, 0.913...]
+坐: [-1.186, 1.481, -1.272...]
+在: [-1.400, 1.549, -1.444...]
+王座: [-1.294, 1.352, 0.169...]
+椅子: [-1.161, 1.414, 0.002...]
+在: [-1.400, 1.549, -1.444...]
+王座: [-1.294, 1.352, 0.169...]
+椅子: [-1.161, 1.414, 0.002...]
+椅子: [-1.161, 1.414, 0.002...]
+王后: [1.105, 0.887, 1.561...]
+女王: [-1.330, 1.136, 1.630...]
+王国: [-1.409, -0.686, 1.275...]
+
+============================================================
+测试完成!
+============================================================
+
+```
+Embedding 本质上是一个巨大的查找表（Lookup Table）。
+输入：一个物体的索引（ID）。
+输出：一串代表该物体特征的连续数字（向量）。
+
+
+
+# 项目目录结构 
+
+├── README.md                           # 项目说明文档
+│
+├── requirement.txt                     # Python依赖列表
+│
+├── 1.1_单参数函数拟合(线性回归)/        # 第一章：单参数线性回归教程
+│   ├── linear_regression_core.py       # 线性回归核心实现
+│   ├── visualization.py                # 可视化脚本
+│   ├── instance.gif                    # 实例演示动画
+│   ├── mse_loss_plot.png               # MSE损失图
+│   ├── mse_loss_curve_fixed_b.gif      # 固定b的MSE曲线
+│   └── mse_loss_curve_fixed_b_nl.gif   # 固定b的非线性MSE曲线
+│
+├── 1.2_多参数函数拟合(多维特征)/        # 第一章：多维特征回归
+│   ├── multi_param_regression_core.py  # 多参数回归核心实现
+│   ├── visualization.py                # 可视化脚本
+│   └── instance.gif                    # 实例演示动画
+│
+├── 2.1_神经元拟合/                     # 第二章：单个神经元拟合
+│   ├── visualization.py                # 神经元训练可视化
+│   ├── manual_bean_bgd.gif             # 批量梯度下降演示
+│   └── manual_bean_sgd.gif             # 随机梯度下降演示
+│
+├── 2.2_3D地形拟合(FCN)/                # 第二章：全连接神经网络3D地形拟合
+│   ├── fcn_3d_terrain_core.py          # FCN核心实现
+│   ├── fcn_3d_terrain_visualizer.py    # 3D地形可视化
+│   ├── activation_functions_visualization.py  # 激活函数可视化
+│   ├── activation_functions_comparison.png    # 激活函数对比图
+│   ├── activation_functions_visualization.gif # 激活函数动画
+│   └── fcn_3d_terrain_visualizer.gif   # 3D拟合动画
+│
+├── 3.1_工程化基础/                     # 第三章：工程化基础（手写Tensor）
+│   ├── tensor.py                       # 手动实现Tensor类
+│   ├── model.py                        # 神经网络模型定义
+│   ├── optim.py                        # 优化器实现
+│   ├── loss.py                         # 损失函数实现
+│   ├── mnist.py                        # MNIST数据集处理
+│   ├── 3d_fit_animated.py              # 3D拟合动画脚本
+│   └── fitting_process.gif             # 拟合过程动画
+│
+├── 3.2_工程化加速/                     # 第三章：工程化加速（向量化优化）
+│   ├── tensor.py                       # 优化后的Tensor实现
+│   ├── model.py                        # 优化后的模型
+│   ├── optim.py                        # 优化后的优化器
+│   ├── loss.py                         # 优化后的损失函数
+│   ├── mnist.py                        # MNIST数据处理
+│   ├── mnist_model.json                # 训练好的模型参数
+│   └── predictions.png                 # 预测结果图
+│
+├── 4_GPT/                              # 第四章：GPT模型实现
+│   ├── config.py                       # GPT配置
+│   ├── train.py                        # 训练脚本
+│   ├── test.py                         # 测试脚本
+│   ├── tensor/                         # Tensor模块
+│   │   ├── core.py                     # Tensor核心实现
+│   │   ├── utils.py                    # 工具函数
+│   │   └── methods/                    # Tensor方法
+│   │       ├── activation.py           # 激活函数
+│   │       ├── arithmetic.py           # 算术运算
+│   │       ├── attention.py            # 注意力机制
+│   │       ├── backward.py             # 反向传播
+│   │       ├── base.py                 # 基础方法
+│   │       ├── basic.py                # 基本操作
+│   │       ├── embedding.py            # 词嵌入
+│   │       ├── feedforward.py          # 前馈网络
+│   │       ├── loss.py                 # 损失函数
+│   │       └── normalization.py        # 归一化
+│   ├── optim/                          # 优化器模块
+│   │   └── optimizer.py                # 优化器实现
+│   └── test/                           # 测试模块
+│       └── embedding_word2vec.py       # Word2Vec嵌入测试
+│
+├── 前置学习/                           # 前置学习内容
+│   ├── derivative.py                   # 导数概念解释脚本
+│   └── derivative.gif                  # 导数可视化动画
+│
+├── bak/                                # 备份/历史代码
+│   ├── activation.py                   # 激活函数备份
+│   ├── gradient_descent.py             # 梯度下降备份
+│   ├── keras_react.py                   # Keras示例
+│   ├── lenet-5.py                      # LeNet-5模型
+│   ├── lstm.py                         # LSTM模型
+│   ├── mnist_recognizer.py             # MNIST识别器
+│   ├── recognizer.py                   # 通用识别器
+│   ├── two_input.py                    # 双输入模型
+│   ├── two_level.py                    # 双层模型
+│   └── vec_handle.py                   # 向量处理
+│
+├── cnn/                                # CNN相关资源
+│   └── ryqyum.gif                      # CNN结构图
+│
+├── data/                               # 数据集目录
+│   ├── train-images-idx3-ubyte.gz     # MNIST训练图片
+│   ├── train-labels-idx1-ubyte.gz     # MNIST训练标签
+│   ├── t10k-images-idx3-ubyte.gz      # MNIST测试图片
+│   └── t10k-labels-idx1-ubyte.gz      # MNIST测试标签
+│
+├── other/                              # 其他资源（图片等）
+│   ├── 5d3e3235-a346-43cd-83be-25c392728998.png
+│   ├── bb7a0622-fa8b-4fc3-8163-45fa23ec7a57.png
+│   └── ME1774511673131.png
+│
+└── tmp/                                # 临时文件目录
