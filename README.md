@@ -906,8 +906,3 @@ z_j   z_j 是Σ（j）求和时 第几个给定值
 ![](3.2_工程化加速\predictions.png)
 ### 4 GPT(Generative Pre-trained Transformer 生成式预训练变换器)
 
-## 参考
-https://github.com/karpathy/nanoGPT
-https://arxiv.org/abs/1412.6980
-https://www.youtube.com/watch?v=spbBQshdhL4
-https://www.youtube.com/watch?v=mCz9X-TGyNc&list=PL5gSAp1ckvYTfZwgRilOs7Y6uC_KBqhTp
