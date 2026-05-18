@@ -32,6 +32,36 @@ class TensorActivation:
         out._backward = _backward
         return out
     
+    def silu(self):
+        """SiLU (Swish) 激活函数
+        
+        SiLU(x) = x * sigmoid(x)
+        
+        返回:
+            应用 SiLU 后的 Tensor
+        """
+        # 计算 sigmoid(x)
+        sigmoid_x = 1.0 / (1.0 + np.exp(-self.data))
+        # SiLU = x * sigmoid(x)
+        out_data = self.data * sigmoid_x
+        out = self.__class__(out_data, (self,), 'silu')
+        
+        def _backward():
+            """SiLU 反向传播
+            
+            SiLU'(x) = sigmoid(x) + x * sigmoid'(x)
+                     = sigmoid(x) + x * sigmoid(x) * (1 - sigmoid(x))
+                     = sigmoid(x) * (1 + x * (1 - sigmoid(x)))
+            """
+            g = out.grad
+            sigmoid_x = 1.0 / (1.0 + np.exp(-self.data))
+            # SiLU 的导数
+            local = sigmoid_x * (1.0 + self.data * (1.0 - sigmoid_x))
+            self.grad = self.grad + local * g
+        
+        out._backward = _backward
+        return out
+    
     def tanh(self):
         """tanh激活函数"""
         out_data = np.tanh(self.data)

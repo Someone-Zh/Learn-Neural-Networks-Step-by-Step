@@ -41,6 +41,37 @@ class MiniMindConfig:
         self.router_aux_loss_coef = kwargs.get("router_aux_loss_coef", 5e-4)
 
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
+#                                 MiniMind Small Config (快速验证用)
+# 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
+class MiniMindSmallConfig:
+    """小参数量模型配置，用于本地快速验证训练"""
+    def __init__(self, **kwargs):
+        self.hidden_size = kwargs.get("hidden_size", 64)
+        self.num_hidden_layers = kwargs.get("num_hidden_layers", 2)
+        self.use_moe = kwargs.get("use_moe", False)
+        self.dropout = kwargs.get("dropout", 0.1)
+        self.vocab_size = kwargs.get("vocab_size", 1000)
+        self.bos_token_id = kwargs.get("bos_token_id", 1)
+        self.eos_token_id = kwargs.get("eos_token_id", 2)
+        self.flash_attn = kwargs.get("flash_attn", False)
+        self.num_attention_heads = kwargs.get("num_attention_heads", 2)
+        self.num_key_value_heads = kwargs.get("num_key_value_heads", 1)
+        self.head_dim = kwargs.get("head_dim", self.hidden_size // self.num_attention_heads)
+        self.hidden_act = kwargs.get("hidden_act", 'silu')
+        self.intermediate_size = kwargs.get("intermediate_size", 256)
+        self.max_position_embeddings = kwargs.get("max_position_embeddings", 256)
+        self.rms_norm_eps = kwargs.get("rms_norm_eps", 1e-6)
+        self.rope_theta = kwargs.get("rope_theta", 10000)
+        self.inference_rope_scaling = kwargs.get("inference_rope_scaling", False)
+        self.rope_scaling = None
+        ### MoE specific configs (ignored if use_moe = False)
+        self.num_experts = kwargs.get("num_experts", 2)
+        self.num_experts_per_tok = kwargs.get("num_experts_per_tok", 1)
+        self.moe_intermediate_size = kwargs.get("moe_intermediate_size", self.intermediate_size)
+        self.norm_topk_prob = kwargs.get("norm_topk_prob", True)
+        self.router_aux_loss_coef = kwargs.get("router_aux_loss_coef", 5e-4)
+
+# 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
 #                                     MiniMind Model
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
 class RMSNorm:
@@ -49,11 +80,17 @@ class RMSNorm:
         self.weight = Tensor(np.ones(dim))
 
     def norm(self, x):
-        mean = (x ** 2).sum(axis=-1, keepdims=True) / x.data.shape[-1]
-        return x * (mean + self.eps) ** -0.5
+        # 计算均方根值 (RMS): sqrt(mean(x^2))
+        # 使用数值稳定的实现
+        rms = np.sqrt(np.mean(x.data ** 2, axis=-1, keepdims=True) + self.eps)
+        # 归一化
+        normalized = Tensor(x.data / rms)
+        return normalized
 
     def forward(self, x):
-        return self.weight * self.norm(x)
+        # 应用权重缩放
+        normalized = self.norm(x)
+        return self.weight * normalized
 
 def precompute_freqs_cis(dim: int, end: int = int(32 * 1024), rope_base: float = 1e6, rope_scaling: dict = None):
     import math
@@ -82,6 +119,14 @@ def precompute_freqs_cis(dim: int, end: int = int(32 * 1024), rope_base: float =
 def apply_rotary_pos_emb(q, k, cos, sin):
     def rotate_half(x):
         return np.concatenate((-x[..., x.shape[-1] // 2:], x[..., : x.shape[-1] // 2]), axis=-1)
+    
+    # 扩展 cos 和 sin 的维度以匹配 q 和 k
+    # q, k: (batch, seq, heads, head_dim)
+    # cos, sin: (batch, seq, head_dim)
+    # 需要将 cos, sin 扩展为 (batch, seq, 1, head_dim) 以便广播
+    if cos.ndim == 3:
+        cos = cos[:, :, np.newaxis, :]  # (batch, seq, 1, head_dim)
+        sin = sin[:, :, np.newaxis, :]  # (batch, seq, 1, head_dim)
     
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
@@ -197,8 +242,8 @@ class FeedForward:
         self.up_proj = Tensor(np.random.randn(config.hidden_size, intermediate_size) * np.sqrt(1.0 / config.hidden_size))
 
     def forward(self, x):
-        # 门控机制
-        gate = x.matmul(self.gate_proj).relu()
+        # 门控机制 - 使用 SiLU 激活函数
+        gate = x.matmul(self.gate_proj).silu()
         up = x.matmul(self.up_proj)
         hidden = gate * up
         output = hidden.matmul(self.down_proj)
@@ -256,7 +301,7 @@ class MiniMindBlock:
     def forward(self, hidden_states, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None):
         residual = hidden_states
         hidden_states = self.input_layernorm.forward(hidden_states)
-        hidden_states, present_key_value = self.self_attn(
+        hidden_states, present_key_value = self.self_attn.forward(
             hidden_states, position_embeddings,
             past_key_value, use_cache, attention_mask
         )
@@ -306,7 +351,7 @@ class MiniMindModel:
         
         presents = []
         for layer, past_key_value in zip(self.layers, past_key_values):
-            hidden_states, present = layer(
+            hidden_states, present = layer.forward(
                 hidden_states,
                 position_embeddings,
                 past_key_value=past_key_value,
@@ -334,7 +379,7 @@ class MiniMindForCausalLM:
         self.model.embed_tokens.data = self.lm_head.data.T
 
     def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, logits_to_keep=0, labels=None):
-        hidden_states, past_key_values, aux_loss = self.model(input_ids, attention_mask, past_key_values, use_cache)
+        hidden_states, past_key_values, aux_loss = self.model.forward(input_ids, attention_mask, past_key_values, use_cache)
         
         # 处理logits_to_keep
         if logits_to_keep > 0:
@@ -345,19 +390,64 @@ class MiniMindForCausalLM:
         
         loss = None
         if labels is not None:
-            # 计算交叉熵损失
-            x = logits.data[..., :-1, :].reshape(-1, logits.data.shape[-1])
-            y = labels[..., 1:].reshape(-1)
-            # 忽略-100标签
-            mask = y != -100
-            x = x[mask]
-            y = y[mask]
-            if len(y) > 0:
-                # 计算softmax
-                exp_x = np.exp(x - np.max(x, axis=-1, keepdims=True))
-                softmax_x = exp_x / np.sum(exp_x, axis=-1, keepdims=True)
-                # 计算交叉熵
-                loss = -np.mean(np.log(softmax_x[np.arange(len(y)), y]))
+            # 计算交叉熵损失 - 保持计算图连接
+            batch_size, seq_len, vocab_size = logits.data.shape
+            
+            # 展平logits（保持Tensor连接）
+            logits_flat_data = logits.data.reshape(-1, vocab_size)
+            labels_flat = labels.reshape(-1)
+            
+            # 创建mask忽略-100标签和padding标签(0)
+            mask = (labels_flat != -100) & (labels_flat != 0)
+            if mask.any():
+                # 提取有效样本
+                valid_logits_data = logits_flat_data[mask]
+                valid_labels = labels_flat[mask]
+                num_valid = len(valid_labels)
+                
+                # 计算log_softmax（数值稳定版本）
+                max_logits = np.max(valid_logits_data, axis=-1, keepdims=True)
+                shifted_logits = valid_logits_data - max_logits
+                exp_logits = np.exp(shifted_logits)
+                sum_exp = np.sum(exp_logits, axis=-1, keepdims=True)
+                log_probs = shifted_logits - np.log(sum_exp)
+                
+                # 计算损失
+                loss_value = -np.mean(log_probs[np.arange(num_valid), valid_labels])
+                
+                # 创建损失Tensor，连接到logits（这样梯度才能传回模型参数）
+                loss = Tensor(loss_value, (logits,), 'cross_entropy')
+                
+                # 设置反向传播函数 - 梯度需要传回logits
+                def _make_backward(valid_logits_data, valid_labels, mask, logits_flat_data, batch_size, seq_len, vocab_size):
+                    def _backward():
+                        if loss.grad is not None:
+                            # 计算softmax概率
+                            probs = np.exp(log_probs)
+                            
+                            # 创建one-hot编码
+                            one_hot = np.zeros_like(valid_logits_data)
+                            one_hot[np.arange(num_valid), valid_labels] = 1.0
+                            
+                            # 计算梯度: (softmax - one_hot) / n
+                            grad_valid = (probs - one_hot) / num_valid
+                            
+                            # 将梯度放回原始位置
+                            grad_flat = np.zeros_like(logits_flat_data)
+                            grad_flat[mask] = grad_valid
+                            
+                            # 重塑回原始形状 (batch, seq_len, vocab_size)
+                            grad_logits = grad_flat.reshape(batch_size, seq_len, vocab_size)
+                            
+                            # 初始化logits.grad如果为None
+                            if logits.grad is None:
+                                logits.grad = np.zeros_like(logits.data)
+                            
+                            # 传回梯度到logits
+                            logits.grad = logits.grad + grad_logits * loss.grad
+                    return _backward
+                
+                loss._backward = _make_backward(valid_logits_data, valid_labels, mask, logits_flat_data, batch_size, seq_len, vocab_size)
         
         return {
             'loss': loss,
@@ -385,12 +475,16 @@ class MiniMindForCausalLM:
             
             # 应用top-p
             if top_p < 1.0:
-                sorted_logits = np.sort(logits, axis=-1)[::-1]
-                sorted_indices = np.argsort(logits, axis=-1)[::-1]
+                sorted_logits = np.sort(logits, axis=-1)[:, ::-1]
+                sorted_indices = np.argsort(logits, axis=-1)[:, ::-1]
                 cumulative_probs = np.cumsum(np.exp(sorted_logits) / np.sum(np.exp(sorted_logits), axis=-1, keepdims=True), axis=-1)
                 mask = cumulative_probs > top_p
-                mask[:, 0] = False
-                logits[sorted_indices] = np.where(mask, -float('inf'), logits[sorted_indices])
+                mask[:, 0] = False  # 至少保留第一个token
+                # 使用高级索引正确应用掩码
+                for i in range(logits.shape[0]):
+                    sorted_mask = mask[i]
+                    sorted_idx = sorted_indices[i]
+                    logits[i, sorted_idx[sorted_mask]] = -float('inf')
             
             # 采样
             probs = np.exp(logits) / np.sum(np.exp(logits), axis=-1, keepdims=True)
@@ -438,11 +532,25 @@ class MiniMindForCausalLM:
 
     def save(self, path):
         """
-        保存模型
+        保存模型（只保存参数数据）
         """
         import pickle
+        
+        # 收集所有参数的数据
+        params_data = {}
+        params_list = self.parameters()
+        for idx, param in enumerate(params_list):
+            if hasattr(param, 'data'):
+                params_data[f'param_{idx}'] = param.data
+        
+        # 保存配置和参数
+        save_dict = {
+            'config': self.config,
+            'params_data': params_data
+        }
+        
         with open(path, 'wb') as f:
-            pickle.dump(self, f)
+            pickle.dump(save_dict, f)
 
     @classmethod
     def load(cls, path):
@@ -451,4 +559,18 @@ class MiniMindForCausalLM:
         """
         import pickle
         with open(path, 'rb') as f:
-            return pickle.load(f)
+            save_dict = pickle.load(f)
+        
+        # 创建新模型
+        config = save_dict['config']
+        model = cls(config)
+        
+        # 加载参数
+        params_list = model.parameters()
+        params_data = save_dict['params_data']
+        
+        for idx, param in enumerate(params_list):
+            if f'param_{idx}' in params_data:
+                param.data = params_data[f'param_{idx}']
+        
+        return model

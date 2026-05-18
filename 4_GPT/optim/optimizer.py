@@ -1,5 +1,6 @@
-# 优化器实现模块 - NumPy加速版本
+# 优化器实现模块 - 支持 NumPy 和 PyTorch GPU 加速
 import numpy as np
+import torch
 
 class Optimizer:
     """优化器基类"""
@@ -10,10 +11,16 @@ class Optimizer:
             release_graph: 是否释放计算图节点，默认为 True
         """
         for p in self.params:
-            p.grad = np.zeros_like(p.data, dtype=np.float64)
+            # 支持 PyTorch Tensor
+            if hasattr(p, 'torch_tensor') and p.torch_tensor is not None:
+                if p.torch_tensor.grad is not None:
+                    p.torch_tensor.grad.zero_()
+                p.grad = None
+            else:
+                p.grad = np.zeros_like(p.data, dtype=np.float64)
             
             # 释放计算图节点
-            if release_graph:
+            if release_graph and hasattr(p, '_prev'):
                 p._prev = set()
                 p._backward = lambda: None
                 p._retain_graph = False
@@ -34,7 +41,16 @@ class SGD(Optimizer):
         for p in self.params:
             if p.grad is None: continue
             
-            p.data = p.data - self.lr * p.grad
+            # 支持 PyTorch Tensor
+            if hasattr(p, 'torch_tensor') and p.torch_tensor is not None:
+                # 使用 PyTorch 进行参数更新
+                with torch.no_grad():
+                    p.torch_tensor -= self.lr * p.torch_tensor.grad
+                # 同步回 NumPy
+                p.data = p.torch_tensor.detach().cpu().numpy()
+            else:
+                # 原有的 NumPy 更新
+                p.data = p.data - self.lr * p.grad
 
 class Adam(Optimizer):
     """Adam优化器，自适应矩估计优化算法"""
@@ -73,20 +89,46 @@ class Adam(Optimizer):
             curr_m = self.m[idx]  # 获取当前参数对应的一阶矩估计
             curr_v = self.v[idx]  # 获取当前参数对应的二阶矩估计
             
-            # 更新一阶矩估计和二阶矩估计
-            new_m = self.beta1 * curr_m + (1 - self.beta1) * p.grad
-            new_v = self.beta2 * curr_v + (1 - self.beta2) * (p.grad ** 2)
-            
-            # 偏差校正
-            m_hat = new_m / (1 - self.beta1 ** self.t)
-            v_hat = new_v / (1 - self.beta2 ** self.t)
-            
-            # 使用校正后的一阶矩和二阶矩更新参数
-            p.data = p.data - self.lr * m_hat / (np.sqrt(v_hat) + self.eps)
-            
-            # 更新状态
-            self.m[idx] = new_m
-            self.v[idx] = new_v
+            # 支持 PyTorch Tensor
+            if hasattr(p, 'torch_tensor') and p.torch_tensor is not None:
+                # 使用 PyTorch 进行 Adam 更新
+                grad = p.torch_tensor.grad
+                
+                # 如果梯度为None，跳过
+                if grad is None:
+                    continue
+                
+                with torch.no_grad():
+                    new_m = self.beta1 * curr_m + (1 - self.beta1) * grad
+                    new_v = self.beta2 * curr_v + (1 - self.beta2) * (grad ** 2)
+                    
+                    m_hat = new_m / (1 - self.beta1 ** self.t)
+                    v_hat = new_v / (1 - self.beta2 ** self.t)
+                    
+                    p.torch_tensor -= self.lr * m_hat / (torch.sqrt(v_hat) + self.eps)
+                
+                # 同步回 NumPy
+                p.data = p.torch_tensor.detach().cpu().numpy()
+                p.grad = grad.cpu().numpy() if grad is not None else None
+                
+                # 更新状态（转换为 CPU numpy）
+                self.m[idx] = new_m.cpu().numpy()
+                self.v[idx] = new_v.cpu().numpy()
+            else:
+                # 原有的 NumPy 实现
+                new_m = self.beta1 * curr_m + (1 - self.beta1) * p.grad
+                new_v = self.beta2 * curr_v + (1 - self.beta2) * (p.grad ** 2)
+                
+                # 偏差校正
+                m_hat = new_m / (1 - self.beta1 ** self.t)
+                v_hat = new_v / (1 - self.beta2 ** self.t)
+                
+                # 使用校正后的一阶矩和二阶矩更新参数
+                p.data = p.data - self.lr * m_hat / (np.sqrt(v_hat) + self.eps)
+                
+                # 更新状态
+                self.m[idx] = new_m
+                self.v[idx] = new_v
 
 class LearningRateScheduler:
     """学习率调度器基类"""

@@ -1,5 +1,6 @@
-# 张量类实现自动微分功能 - NumPy加速版本
+# 张量类实现自动微分功能 - 支持 NumPy 和 PyTorch GPU 加速
 import numpy as np
+import torch
 from .methods import (
     TensorBase,
     TensorArithmetic,
@@ -12,6 +13,11 @@ from .methods import (
     TensorLoss,
     TensorBackward
 )
+from .utils import _unbroadcast
+
+# 全局配置：是否使用 PyTorch GPU 加速
+USE_PYTORCH_BACKEND = True  # 设置为 True 启用 PyTorch 后端
+DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class Tensor:
     """张量类，支持自动微分和各种数学运算
@@ -28,20 +34,34 @@ class Tensor:
     - TensorLoss: 损失函数，如交叉熵损失
     - TensorBackward: 反向传播功能
     """
-    def __init__(self, data, _prev=(), _op='', label=''):
+    def __init__(self, data, _prev=(), _op='', label='', device=None):
         # 初始化基础功能
         self.base = TensorBase(data, _prev, _op, label)
         
-        # 组合各个功能模块
-        self.arithmetic = TensorArithmetic()
-        self.basic = TensorBasic()
-        self.embedding = TensorEmbedding()
-        self.normalization = TensorNormalization()
-        self.attention = TensorAttention()
-        self.feedforward = TensorFeedForward()
-        self.activation = TensorActivation()
-        self.loss = TensorLoss()
-        self.backward_module = TensorBackward()
+        # PyTorch GPU 支持
+        self.use_pytorch = USE_PYTORCH_BACKEND
+        self.device = device or DEVICE
+        if self.use_pytorch:
+            if isinstance(data, torch.Tensor):
+                self.torch_tensor = data.to(self.device)
+            else:
+                if not isinstance(data, np.ndarray):
+                    data = np.array(data)
+                self.torch_tensor = torch.from_numpy(data.astype(np.float32)).to(self.device)
+            self.torch_tensor.requires_grad = True
+        else:
+            self.torch_tensor = None
+        
+        # 组合各个功能模块（使用下划线前缀避免与方法冲突）
+        self._arithmetic = TensorArithmetic()
+        self._basic = TensorBasic()
+        self._embedding = TensorEmbedding()
+        self._normalization = TensorNormalization()
+        self._attention = TensorAttention()
+        self._feedforward = TensorFeedForward()
+        self._activation = TensorActivation()
+        self._loss = TensorLoss()
+        self._backward_module = TensorBackward()
         
         # 代理属性
         self.data = self.base.data
@@ -70,7 +90,6 @@ class Tensor:
         
         def _backward():
             g = out.grad
-            from ..utils import _unbroadcast
             self.grad = self.grad + _unbroadcast(g, self.data.shape)
             other.grad = other.grad + _unbroadcast(g, other.data.shape)
         
@@ -84,7 +103,6 @@ class Tensor:
         
         def _backward():
             g = out.grad
-            from ..utils import _unbroadcast
             self.grad = self.grad + _unbroadcast(g * other.data, self.data.shape)
             other.grad = other.grad + _unbroadcast(g * self.data, other.data.shape)
         
@@ -131,40 +149,76 @@ class Tensor:
     
     # 基本矩阵运算
     def matmul(self, other):
+        """矩阵乘法，支持二维和三维批量操作"""
         other = self._ensure_tensor(other)
-        A, B = self.data, other.data
         
-        if A.ndim < 1 or B.ndim < 1:
+        A = self.torch_tensor
+        B = other.torch_tensor
+        
+        if A.dim() < 1 or B.dim() < 1:
             raise ValueError("矩阵乘法要求两个操作数都是数组")
         
-        if A.ndim == 1:
+        # 处理一维数组
+        orig_A_shape = A.shape
+        orig_B_shape = B.shape
+        
+        if A.dim() == 1:
             A = A.reshape(1, -1)
-        if B.ndim == 1:
+        if B.dim() == 1:
             B = B.reshape(-1, 1)
         
-        if A.shape[1] != B.shape[0]:
-            raise ValueError(f"矩阵维度不匹配: 第一个矩阵的列数({A.shape[1]}) != 第二个矩阵的行数({B.shape[0]})")
-
-        out_data = np.matmul(A, B)
-        out = self.__class__(out_data, (self, other), '@')
-
+        # 执行矩阵乘法
+        result = torch.matmul(A, B)
+        
+        out = self.__class__(result.detach().cpu().numpy(), device=self.device)
+        out.torch_tensor = result
+        
         def _backward():
-            g = out.grad
-            orig_A_shape = A.shape
-            orig_B_shape = B.shape
-            
-            dA = np.matmul(g, B.T)
-            dB = np.matmul(A.T, g)
-
-            if self.data.ndim == 1:
-                dA = dA.flatten()
-            if other.data.ndim == 1:
-                dB = dB.flatten()
-            
-            self.grad = self.grad + dA
-            other.grad = other.grad + dB
+            if out.torch_tensor.grad is not None:
+                g = out.torch_tensor.grad
+                
+                # 计算梯度
+                if A.dim() == 3 and B.dim() == 2:
+                    # (batch, seq, output) @ (output, hidden).T -> (batch, seq, hidden)
+                    dA = torch.matmul(g, B.t())
+                    # 对 batch 和 seq 维度求和
+                    dB = torch.matmul(A.transpose(1, 2), g).sum(dim=0)
+                elif A.dim() == 2 and B.dim() == 2:
+                    dA = torch.matmul(g, B.t())
+                    dB = torch.matmul(A.t(), g)
+                elif A.dim() == 3 and B.dim() == 3:
+                    dA = torch.matmul(g, B.transpose(1, 2))
+                    dB = torch.matmul(A.transpose(1, 2), g).sum(dim=0)
+                else:
+                    dA = torch.matmul(g, B.t())
+                    dB = torch.matmul(A.t(), g)
+                
+                # 更新梯度
+                if self.torch_tensor.grad is None:
+                    self.torch_tensor.grad = torch.zeros_like(self.torch_tensor)
+                if other.torch_tensor.grad is None:
+                    other.torch_tensor.grad = torch.zeros_like(other.torch_tensor)
+                
+                # 恢复原始形状
+                if len(orig_A_shape) == 1:
+                    dA = dA.flatten()
+                if len(orig_B_shape) == 1:
+                    dB = dB.flatten()
+                
+                self.torch_tensor.grad += dA
+                other.torch_tensor.grad += dB
+                
+                # 同步数据
+                self.data = self.torch_tensor.detach().cpu().numpy()
+                other.data = other.torch_tensor.detach().cpu().numpy()
+                if self.torch_tensor.grad is not None:
+                    self.grad = self.torch_tensor.grad.cpu().numpy()
+                if other.torch_tensor.grad is not None:
+                    other.grad = other.torch_tensor.grad.cpu().numpy()
         
         out._backward = _backward
+        out._prev = {self, other}
+        out._op = '@'
         return out
     
     def sum(self, axis=None, keepdims=False):
@@ -510,6 +564,22 @@ class Tensor:
         out._backward = _backward
         return out
     
+    def silu(self):
+        """SiLU (Swish) 激活函数: x * sigmoid(x)"""
+        sigmoid_x = 1.0 / (1.0 + np.exp(-self.data))
+        out_data = self.data * sigmoid_x
+        out = self.__class__(out_data, (self,), 'silu')
+        
+        def _backward():
+            g = out.grad
+            sigmoid_x = 1.0 / (1.0 + np.exp(-self.data))
+            # SiLU 导数: sigmoid(x) * (1 + x * (1 - sigmoid(x)))
+            local = sigmoid_x * (1.0 + self.data * (1.0 - sigmoid_x))
+            self.grad = self.grad + local * g
+        
+        out._backward = _backward
+        return out
+    
     def tanh(self):
         out_data = np.tanh(self.data)
         out = self.__class__(out_data, (self,), 'tanh')
@@ -549,6 +619,24 @@ class Tensor:
     
     # 反向传播
     def backward(self, retain_graph=False):
+        # 如果使用 PyTorch 后端，使用 autograd
+        if self.use_pytorch and self.torch_tensor is not None:
+            if self.torch_tensor.grad_fn is not None or self.torch_tensor.requires_grad:
+                # 创建一个标量用于反向传播
+                if self.torch_tensor.numel() == 1:
+                    self.torch_tensor.backward(retain_graph=retain_graph)
+                else:
+                    # 对于非标量，需要提供一个梯度
+                    gradient = torch.ones_like(self.torch_tensor)
+                    self.torch_tensor.backward(gradient=gradient, retain_graph=retain_graph)
+                
+                # 同步梯度到 NumPy
+                if self.torch_tensor.grad is not None:
+                    self.grad = self.torch_tensor.grad.cpu().numpy()
+                    self.data = self.torch_tensor.detach().cpu().numpy()
+            return
+        
+        # 原有的 NumPy 反向传播逻辑
         topo = []
         visited = set()
         
@@ -771,3 +859,81 @@ class GPT:
         import pickle
         with open(path, 'rb') as f:
             return pickle.load(f)
+
+
+# ========================================
+# PyTorch GPU 加速配置函数
+# ========================================
+
+def enable_pytorch_backend(device=None):
+    """
+    启用 PyTorch GPU 加速后端
+    
+    参数:
+        device: 设备名称，'cuda' 或 'cpu'，默认为自动检测
+    """
+    global USE_PYTORCH_BACKEND, DEVICE
+    USE_PYTORCH_BACKEND = True
+    if device is None:
+        DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+    else:
+        DEVICE = device
+    print(f"PyTorch backend enabled. Using device: {DEVICE}")
+    if torch.cuda.is_available():
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(f"Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+
+
+def disable_pytorch_backend():
+    """禁用 PyTorch 后端，使用 NumPy"""
+    global USE_PYTORCH_BACKEND
+    USE_PYTORCH_BACKEND = False
+    print("PyTorch backend disabled. Using NumPy.")
+
+
+def get_backend_info():
+    """获取当前后端信息"""
+    info = {
+        'backend': 'PyTorch' if USE_PYTORCH_BACKEND else 'NumPy',
+        'device': DEVICE if USE_PYTORCH_BACKEND else 'CPU',
+        'pytorch_version': torch.__version__,
+        'cuda_available': torch.cuda.is_available(),
+    }
+    if torch.cuda.is_available():
+        info['gpu_name'] = torch.cuda.get_device_name(0)
+        info['gpu_memory_gb'] = torch.cuda.get_device_properties(0).total_memory / 1024**3
+    return info
+
+
+def to_torch_tensor(tensor_obj):
+    """
+    将自定义 Tensor 转换为 PyTorch Tensor
+    
+    参数:
+        tensor_obj: 自定义 Tensor 对象
+    
+    返回:
+        PyTorch Tensor
+    """
+    if isinstance(tensor_obj, torch.Tensor):
+        return tensor_obj
+    return torch.from_numpy(tensor_obj.data.astype(np.float32)).to(tensor_obj.device if hasattr(tensor_obj, 'device') else DEVICE)
+
+
+def from_torch_tensor(torch_tensor, requires_grad=True):
+    """
+    从 PyTorch Tensor 创建自定义 Tensor
+    
+    参数:
+        torch_tensor: PyTorch Tensor
+        requires_grad: 是否需要梯度
+    
+    返回:
+        自定义 Tensor 对象
+    """
+    data = torch_tensor.detach().cpu().numpy()
+    result = Tensor(data)
+    if requires_grad and torch_tensor.requires_grad:
+        result.use_pytorch = True
+        result.torch_tensor = torch_tensor.clone().requires_grad_(True)
+    return result
