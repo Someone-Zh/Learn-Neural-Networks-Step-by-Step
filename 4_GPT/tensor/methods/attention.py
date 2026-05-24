@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 class TensorAttention:
     def multi_head_attention(self, q, k, v, num_heads, mask=None):
@@ -26,6 +27,99 @@ class TensorAttention:
         # 验证维度
         if d_model % num_heads != 0:
             raise ValueError("d_model必须能被num_heads整除")
+        
+        # 如果使用 PyTorch 后端
+        if self.use_pytorch and self.torch_tensor is not None and q.torch_tensor is not None and k.torch_tensor is not None and v.torch_tensor is not None:
+            # 线性投影
+            wq, wk, wv = torch.chunk(self.torch_tensor, 3, dim=1)
+            
+            # 计算Q, K, V
+            q_proj = torch.matmul(q.torch_tensor, wq)
+            k_proj = torch.matmul(k.torch_tensor, wk)
+            v_proj = torch.matmul(v.torch_tensor, wv)
+            
+            # 重塑为多头
+            q_reshaped = q_proj.reshape(batch_size, seq_len, num_heads, d_k).transpose(1, 2)
+            k_reshaped = k_proj.reshape(batch_size, seq_len, num_heads, d_k).transpose(1, 2)
+            v_reshaped = v_proj.reshape(batch_size, seq_len, num_heads, d_k).transpose(1, 2)
+            
+            # 计算注意力分数
+            attn_scores = torch.matmul(q_reshaped, k_reshaped.transpose(-2, -1)) / np.sqrt(d_k)
+            
+            # 应用注意力掩码
+            if mask is not None:
+                mask_torch = mask.torch_tensor if hasattr(mask, 'torch_tensor') else torch.tensor(mask, device=self.device)
+                attn_scores = attn_scores + mask_torch
+            
+            # 计算注意力权重
+            attn_weights = torch.softmax(attn_scores, dim=-1)
+            
+            # 计算注意力输出
+            attn_output = torch.matmul(attn_weights, v_reshaped)
+            attn_output = attn_output.transpose(1, 2).reshape(batch_size, seq_len, d_model)
+            
+            out_data = attn_output.detach().cpu().numpy()
+            out = self.__class__(out_data, (self, q, k, v), 'multi_head_attention')
+            out.torch_tensor = attn_output
+            out.use_pytorch = True
+            out.device = self.device
+            
+            def _backward():
+                if out.torch_tensor.grad is not None:
+                    g = out.torch_tensor.grad
+                    
+                    # 反向传播
+                    dv = torch.matmul(attn_weights.transpose(-2, -1), 
+                                     g.reshape(batch_size, num_heads, seq_len, d_k).transpose(1, 2))
+                    dv = dv.transpose(1, 2).reshape(batch_size, seq_len, d_model)
+                    
+                    d_attn_weights = torch.matmul(g.reshape(batch_size, num_heads, seq_len, d_k), 
+                                                 v_reshaped.transpose(-2, -1))
+                    
+                    d_attn_scores = d_attn_weights * attn_weights - \
+                                   d_attn_weights.sum(dim=-1, keepdim=True) * attn_weights
+                    
+                    dk = torch.matmul(q_reshaped.transpose(-2, -1), d_attn_scores) / np.sqrt(d_k)
+                    dk = dk.transpose(1, 2).reshape(batch_size, seq_len, d_model)
+                    
+                    dq = torch.matmul(d_attn_scores, k_reshaped.transpose(-2, -1)) / np.sqrt(d_k)
+                    dq = dq.transpose(1, 2).reshape(batch_size, seq_len, d_model)
+                    
+                    dwq = torch.matmul(q.torch_tensor.transpose(1, 2), dq).sum(dim=0)
+                    dwk = torch.matmul(k.torch_tensor.transpose(1, 2), dk).sum(dim=0)
+                    dwv = torch.matmul(v.torch_tensor.transpose(1, 2), dv).sum(dim=0)
+                    dW = torch.cat([dwq, dwk, dwv], dim=1)
+                    
+                    if self.torch_tensor.grad is None:
+                        self.torch_tensor.grad = torch.zeros_like(self.torch_tensor)
+                    if q.torch_tensor.grad is None:
+                        q.torch_tensor.grad = torch.zeros_like(q.torch_tensor)
+                    if k.torch_tensor.grad is None:
+                        k.torch_tensor.grad = torch.zeros_like(k.torch_tensor)
+                    if v.torch_tensor.grad is None:
+                        v.torch_tensor.grad = torch.zeros_like(v.torch_tensor)
+                    
+                    self.torch_tensor.grad += dW
+                    q.torch_tensor.grad += dq
+                    k.torch_tensor.grad += dk
+                    v.torch_tensor.grad += dv
+                    
+                    # 同步数据
+                    self.data = self.torch_tensor.detach().cpu().numpy()
+                    q.data = q.torch_tensor.detach().cpu().numpy()
+                    k.data = k.torch_tensor.detach().cpu().numpy()
+                    v.data = v.torch_tensor.detach().cpu().numpy()
+                    if self.torch_tensor.grad is not None:
+                        self.grad = self.torch_tensor.grad.cpu().numpy()
+                    if q.torch_tensor.grad is not None:
+                        q.grad = q.torch_tensor.grad.cpu().numpy()
+                    if k.torch_tensor.grad is not None:
+                        k.grad = k.torch_tensor.grad.cpu().numpy()
+                    if v.torch_tensor.grad is not None:
+                        v.grad = v.torch_tensor.grad.cpu().numpy()
+            
+            out._backward = _backward
+            return out
         
         # 线性投影（简化版，实际应该有可学习的权重）
         # 这里我们假设self是权重矩阵

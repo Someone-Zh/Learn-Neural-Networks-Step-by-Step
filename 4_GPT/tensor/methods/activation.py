@@ -1,7 +1,18 @@
 import numpy as np
+import torch
 
 class TensorActivation:
     def exp(self):
+        # 如果使用 PyTorch 后端
+        if self.use_pytorch and self.torch_tensor is not None:
+            result_torch = torch.exp(self.torch_tensor)
+            out_data = result_torch.detach().cpu().numpy()
+            out = self.__class__(out_data, (self,), 'exp')
+            out.torch_tensor = result_torch
+            out.use_pytorch = True
+            out.device = self.device
+            return out
+        
         # 使用NumPy计算自然指数函数e^x
         out_data = np.exp(self.data)
         # 创建表示指数函数结果的新张量
@@ -18,6 +29,16 @@ class TensorActivation:
     
     def relu(self):
         """ReLU激活函数"""
+        # 如果使用 PyTorch 后端
+        if self.use_pytorch and self.torch_tensor is not None:
+            result_torch = torch.relu(self.torch_tensor)
+            out_data = result_torch.detach().cpu().numpy()
+            out = self.__class__(out_data, (self,), 'relu')
+            out.torch_tensor = result_torch
+            out.use_pytorch = True
+            out.device = self.device
+            return out
+        
         out_data = np.maximum(0, self.data)
         # 创建新的Tensor对象
         out = self.__class__(out_data, (self,), 'relu')
@@ -40,6 +61,16 @@ class TensorActivation:
         返回:
             应用 SiLU 后的 Tensor
         """
+        # 如果使用 PyTorch 后端
+        if self.use_pytorch and self.torch_tensor is not None:
+            result_torch = torch.nn.functional.silu(self.torch_tensor)
+            out_data = result_torch.detach().cpu().numpy()
+            out = self.__class__(out_data, (self,), 'silu')
+            out.torch_tensor = result_torch
+            out.use_pytorch = True
+            out.device = self.device
+            return out
+        
         # 计算 sigmoid(x)
         sigmoid_x = 1.0 / (1.0 + np.exp(-self.data))
         # SiLU = x * sigmoid(x)
@@ -64,6 +95,16 @@ class TensorActivation:
     
     def tanh(self):
         """tanh激活函数"""
+        # 如果使用 PyTorch 后端
+        if self.use_pytorch and self.torch_tensor is not None:
+            result_torch = torch.tanh(self.torch_tensor)
+            out_data = result_torch.detach().cpu().numpy()
+            out = self.__class__(out_data, (self,), 'tanh')
+            out.torch_tensor = result_torch
+            out.use_pytorch = True
+            out.device = self.device
+            return out
+        
         out_data = np.tanh(self.data)
         # 创建新的Tensor对象
         out = self.__class__(out_data, (self,), 'tanh')
@@ -80,6 +121,16 @@ class TensorActivation:
     
     def sigmoid(self):
         """sigmoid激活函数"""
+        # 如果使用 PyTorch 后端
+        if self.use_pytorch and self.torch_tensor is not None:
+            result_torch = torch.sigmoid(self.torch_tensor)
+            out_data = result_torch.detach().cpu().numpy()
+            out = self.__class__(out_data, (self,), 'sigmoid')
+            out.torch_tensor = result_torch
+            out.use_pytorch = True
+            out.device = self.device
+            return out
+        
         out_data = 1.0 / (1.0 + np.exp(-self.data))
         # 创建新的Tensor对象
         out = self.__class__(out_data, (self,), 'sigmoid')
@@ -95,6 +146,18 @@ class TensorActivation:
         return out
 
     def log(self):
+        # 如果使用 PyTorch 后端
+        if self.use_pytorch and self.torch_tensor is not None:
+            if torch.any(self.torch_tensor <= 0):
+                raise ValueError("对数函数要求输入值大于0")
+            result_torch = torch.log(self.torch_tensor)
+            out_data = result_torch.detach().cpu().numpy()
+            out = self.__class__(out_data, (self,), 'log')
+            out.torch_tensor = result_torch
+            out.use_pytorch = True
+            out.device = self.device
+            return out
+        
         # 使用NumPy计算自然对数函数ln(x)
         # 检查是否有非正数
         if np.any(self.data <= 0):

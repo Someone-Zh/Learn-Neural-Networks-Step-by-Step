@@ -1,10 +1,22 @@
 import numpy as np
+import torch
 from ..utils import _unbroadcast
 
 class TensorArithmetic:
     def __add__(self, other):
         # 确保other是Tensor类型
         other = self._ensure_tensor(other)
+        
+        # 如果使用 PyTorch 后端
+        if self.use_pytorch and self.torch_tensor is not None and other.torch_tensor is not None:
+            result_torch = self.torch_tensor + other.torch_tensor
+            out_data = result_torch.detach().cpu().numpy()
+            out = self.__class__(out_data, (self, other), '+')
+            out.torch_tensor = result_torch
+            out.use_pytorch = True
+            out.device = self.device
+            return out
+        
         # 使用NumPy广播机制进行加法
         out_data = self.data + other.data
             
@@ -24,6 +36,17 @@ class TensorArithmetic:
     def __mul__(self, other):
         # 确保other是Tensor类型
         other = self._ensure_tensor(other)
+        
+        # 如果使用 PyTorch 后端
+        if self.use_pytorch and self.torch_tensor is not None and other.torch_tensor is not None:
+            result_torch = self.torch_tensor * other.torch_tensor
+            out_data = result_torch.detach().cpu().numpy()
+            out = self.__class__(out_data, (self, other), '*')
+            out.torch_tensor = result_torch
+            out.use_pytorch = True
+            out.device = self.device
+            return out
+        
         # 使用NumPy进行逐元素乘法
         out_data = self.data * other.data
 
@@ -43,6 +66,17 @@ class TensorArithmetic:
     def __pow__(self, power):
         # 验证幂次必须是数字
         assert isinstance(power, (int, float))
+        
+        # 如果使用 PyTorch 后端
+        if self.use_pytorch and self.torch_tensor is not None:
+            result_torch = self.torch_tensor ** power
+            out_data = result_torch.detach().cpu().numpy()
+            out = self.__class__(out_data, (self,), f'**{power}')
+            out.torch_tensor = result_torch
+            out.use_pytorch = True
+            out.device = self.device
+            return out
+        
         # 使用NumPy计算幂运算结果
         out_data = self.data ** power
             
@@ -60,7 +94,17 @@ class TensorArithmetic:
         return out
 
     # 负号运算：返回自身的相反数
-    def __neg__(self): return self * -1
+    def __neg__(self): 
+        if self.use_pytorch and self.torch_tensor is not None:
+            result_torch = -self.torch_tensor
+            out_data = result_torch.detach().cpu().numpy()
+            out = self.__class__(out_data, (self,), 'neg')
+            out.torch_tensor = result_torch
+            out.use_pytorch = True
+            out.device = self.device
+            return out
+        return self * -1
+    
     # 减法运算：通过加法和负号实现
     def __sub__(self, other):
         other = self._ensure_tensor(other)
@@ -78,10 +122,24 @@ class TensorArithmetic:
     
     def __rtruediv__(self, other):
         return self._ensure_tensor(other) * (self ** -1)
+    
     # 除法运算：通过乘法和负指数实现
     def __truediv__(self, other): 
         # 确保other是Tensor类型
         other = self._ensure_tensor(other)
+        
+        # 如果使用 PyTorch 后端
+        if self.use_pytorch and self.torch_tensor is not None and other.torch_tensor is not None:
+            if torch.any(other.torch_tensor == 0):
+                raise ValueError("除数不能为零")
+            result_torch = self.torch_tensor / other.torch_tensor
+            out_data = result_torch.detach().cpu().numpy()
+            out = self.__class__(out_data, (self, other), '/')
+            out.torch_tensor = result_torch
+            out.use_pytorch = True
+            out.device = self.device
+            return out
+        
         # 检查除数是否为零
         if np.any(other.data == 0):
             raise ValueError("除数不能为零")

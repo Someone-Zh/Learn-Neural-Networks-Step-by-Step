@@ -229,8 +229,7 @@ class MiniMindModel(nn.Module):
 class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
     config_class = MiniMindConfig
     def __init__(self, config: MiniMindConfig = None):
-        self.config = config or MiniMindConfig()
-        super().__init__(self.config)
+        super().__init__(config or MiniMindConfig())
         self.model = MiniMindModel(self.config)
         self.lm_head = nn.Linear(self.config.hidden_size, self.config.vocab_size, bias=False)
         self.model.embed_tokens.weight = self.lm_head.weight

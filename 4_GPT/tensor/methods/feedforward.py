@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 class TensorFeedForward:
     def feed_forward(self, x, hidden_dim):
@@ -20,6 +21,55 @@ class TensorFeedForward:
         # 验证权重矩阵形状
         if self.data.shape != (d_model + hidden_dim, d_model):
             raise ValueError(f"权重矩阵形状应为 ({d_model + hidden_dim}, {d_model})")
+        
+        # 如果使用 PyTorch 后端
+        if self.use_pytorch and self.torch_tensor is not None and x.torch_tensor is not None:
+            # 分割权重
+            w1 = self.torch_tensor[:d_model, :]
+            w2 = self.torch_tensor[d_model:, :]
+            
+            # 前向传播
+            hidden = torch.relu(torch.matmul(x.torch_tensor, w1))
+            result_torch = torch.matmul(hidden, w2)
+            
+            out_data = result_torch.detach().cpu().numpy()
+            out = self.__class__(out_data, (self, x), 'feed_forward')
+            out.torch_tensor = result_torch
+            out.use_pytorch = True
+            out.device = self.device
+            
+            def _backward():
+                if out.torch_tensor.grad is not None:
+                    g = out.torch_tensor.grad
+                    
+                    # 反向传播
+                    dw2 = torch.matmul(hidden.transpose(1, 2), g).sum(dim=0)
+                    
+                    dhidden = torch.matmul(g, w2.T)
+                    dhidden = dhidden * (hidden > 0).float()  # ReLU导数
+                    
+                    dw1 = torch.matmul(x.torch_tensor.transpose(1, 2), dhidden).sum(dim=0)
+                    
+                    dx = torch.matmul(dhidden, w1.T)
+                    
+                    if self.torch_tensor.grad is None:
+                        self.torch_tensor.grad = torch.zeros_like(self.torch_tensor)
+                    if x.torch_tensor.grad is None:
+                        x.torch_tensor.grad = torch.zeros_like(x.torch_tensor)
+                    
+                    self.torch_tensor.grad += torch.cat([dw1, dw2], dim=0)
+                    x.torch_tensor.grad += dx
+                    
+                    # 同步数据
+                    self.data = self.torch_tensor.detach().cpu().numpy()
+                    x.data = x.torch_tensor.detach().cpu().numpy()
+                    if self.torch_tensor.grad is not None:
+                        self.grad = self.torch_tensor.grad.cpu().numpy()
+                    if x.torch_tensor.grad is not None:
+                        x.grad = x.torch_tensor.grad.cpu().numpy()
+            
+            out._backward = _backward
+            return out
         
         # 分割权重
         w1 = self.data[:d_model, :]

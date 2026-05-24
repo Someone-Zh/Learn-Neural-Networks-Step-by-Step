@@ -1,9 +1,81 @@
 import numpy as np
+import torch
 
 class TensorBasic:
     def matmul(self, other):
         # 确保other是Tensor类型
         other = self._ensure_tensor(other)
+        
+        # 如果使用 PyTorch 后端
+        if self.use_pytorch and self.torch_tensor is not None and other.torch_tensor is not None:
+            A = self.torch_tensor
+            B = other.torch_tensor
+            
+            if A.dim() < 1 or B.dim() < 1:
+                raise ValueError("矩阵乘法要求两个操作数都是数组")
+            
+            # 处理一维数组
+            orig_A_shape = A.shape
+            orig_B_shape = B.shape
+            
+            if A.dim() == 1:
+                A = A.reshape(1, -1)
+            if B.dim() == 1:
+                B = B.reshape(-1, 1)
+            
+            # 执行矩阵乘法
+            result = torch.matmul(A, B)
+            
+            out_data = result.detach().cpu().numpy()
+            out = self.__class__(out_data, (self, other), '@')
+            out.torch_tensor = result
+            out.use_pytorch = True
+            out.device = self.device
+            
+            def _backward():
+                if out.torch_tensor.grad is not None:
+                    g = out.torch_tensor.grad
+                    
+                    # 计算梯度
+                    if A.dim() == 3 and B.dim() == 2:
+                        dA = torch.matmul(g, B.t())
+                        dB = torch.matmul(A.transpose(1, 2), g).sum(dim=0)
+                    elif A.dim() == 2 and B.dim() == 2:
+                        dA = torch.matmul(g, B.t())
+                        dB = torch.matmul(A.t(), g)
+                    elif A.dim() == 3 and B.dim() == 3:
+                        dA = torch.matmul(g, B.transpose(1, 2))
+                        dB = torch.matmul(A.transpose(1, 2), g).sum(dim=0)
+                    else:
+                        dA = torch.matmul(g, B.t())
+                        dB = torch.matmul(A.t(), g)
+                    
+                    # 更新梯度
+                    if self.torch_tensor.grad is None:
+                        self.torch_tensor.grad = torch.zeros_like(self.torch_tensor)
+                    if other.torch_tensor.grad is None:
+                        other.torch_tensor.grad = torch.zeros_like(other.torch_tensor)
+                    
+                    # 恢复原始形状
+                    if len(orig_A_shape) == 1:
+                        dA = dA.flatten()
+                    if len(orig_B_shape) == 1:
+                        dB = dB.flatten()
+                    
+                    self.torch_tensor.grad += dA
+                    other.torch_tensor.grad += dB
+                    
+                    # 同步数据
+                    self.data = self.torch_tensor.detach().cpu().numpy()
+                    other.data = other.torch_tensor.detach().cpu().numpy()
+                    if self.torch_tensor.grad is not None:
+                        self.grad = self.torch_tensor.grad.cpu().numpy()
+                    if other.torch_tensor.grad is not None:
+                        other.grad = other.torch_tensor.grad.cpu().numpy()
+            
+            out._backward = _backward
+            return out
+        
         # 获取两个张量的数据
         A, B = self.data, other.data
         
@@ -52,6 +124,58 @@ class TensorBasic:
         return out
 
     def sum(self, axis=None, keepdims=False):
+        # 如果使用 PyTorch 后端
+        if self.use_pytorch and self.torch_tensor is not None:
+            # 转换axis参数
+            if axis is None:
+                result_torch = torch.sum(self.torch_tensor)
+            else:
+                result_torch = torch.sum(self.torch_tensor, dim=axis, keepdim=keepdims)
+            
+            out_data = result_torch.detach().cpu().numpy()
+            out = self.__class__(out_data, (self,), 'sum')
+            out.torch_tensor = result_torch
+            out.use_pytorch = True
+            out.device = self.device
+            
+            def _backward():
+                if out.torch_tensor.grad is not None:
+                    g = out.torch_tensor.grad
+                    
+                    # 广播梯度到原始形状
+                    if axis is None:
+                        expanded_g = g.expand_as(self.torch_tensor)
+                    else:
+                        # 需要手动广播
+                        shape = list(self.torch_tensor.shape)
+                        if isinstance(axis, int):
+                            if keepdims:
+                                shape[axis] = 1
+                            else:
+                                shape.pop(axis)
+                        else:
+                            for ax in sorted(axis, reverse=True):
+                                if keepdims:
+                                    shape[ax] = 1
+                                else:
+                                    shape.pop(ax)
+                        
+                        # 重塑梯度以匹配原始形状
+                        g_reshaped = g.reshape(shape)
+                        expanded_g = g_reshaped.expand_as(self.torch_tensor)
+                    
+                    if self.torch_tensor.grad is None:
+                        self.torch_tensor.grad = torch.zeros_like(self.torch_tensor)
+                    self.torch_tensor.grad += expanded_g
+                    
+                    # 同步数据
+                    self.data = self.torch_tensor.detach().cpu().numpy()
+                    if self.torch_tensor.grad is not None:
+                        self.grad = self.torch_tensor.grad.cpu().numpy()
+            
+            out._backward = _backward
+            return out
+        
         # 使用NumPy计算总和
         total = np.sum(self.data, axis=axis, keepdims=keepdims)
         # 创建表示总和的新张量

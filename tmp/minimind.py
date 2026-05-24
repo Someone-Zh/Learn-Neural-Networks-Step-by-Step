@@ -49,7 +49,7 @@ print("✅ 模型加载成功！")
 # ======================
 def chat(prompt):
     # ✅ 关键 1：对话模板（模型不乱说的核心）
-    conversation = [{"role": "system", "content": "你是一个专业的问答机器人,你拥有工具 write：写文件 和 read：读取文件,你可以根据用户的问题,调用这两个工具来回答用户的问题"},
+    conversation = [{"role": "system", "content": "你是一个专业的问答助手。"},
                    {"role": "user", "content": prompt}]
     inputs = tokenizer.apply_chat_template(
         conversation,
@@ -80,6 +80,6 @@ def chat(prompt):
 # 测试
 # ======================
 if __name__ == "__main__":
-    prompt = "写个文件啊记录一下当前时间？"
+    prompt = "我该如何挑选电视？"
     print(f"\n🧑 你: {prompt}")
     chat(prompt)

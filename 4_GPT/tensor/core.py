@@ -47,8 +47,14 @@ class Tensor:
             else:
                 if not isinstance(data, np.ndarray):
                     data = np.array(data)
-                self.torch_tensor = torch.from_numpy(data.astype(np.float32)).to(self.device)
-            self.torch_tensor.requires_grad = True
+                # 只对数值型数据转换为 float32
+                if data.dtype in [np.int32, np.int64, np.int16, np.int8]:
+                    self.torch_tensor = torch.from_numpy(data).to(self.device)
+                else:
+                    self.torch_tensor = torch.from_numpy(data.astype(np.float32)).to(self.device)
+            # 只对浮点型张量设置 requires_grad
+            if self.torch_tensor.dtype in [torch.float32, torch.float64, torch.float16, torch.bfloat16]:
+                self.torch_tensor.requires_grad = True
         else:
             self.torch_tensor = None
         

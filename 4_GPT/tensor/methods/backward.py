@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 class TensorBackward:
     def backward(self, retain_graph=False):
@@ -7,6 +8,24 @@ class TensorBackward:
         参数:
             retain_graph: 是否保留计算图用于多次反向传播，默认为 False
         """
+        # 如果使用 PyTorch 后端，使用 autograd
+        if self.use_pytorch and self.torch_tensor is not None:
+            if self.torch_tensor.grad_fn is not None or self.torch_tensor.requires_grad:
+                # 创建一个标量用于反向传播
+                if self.torch_tensor.numel() == 1:
+                    self.torch_tensor.backward(retain_graph=retain_graph)
+                else:
+                    # 对于非标量，需要提供一个梯度
+                    gradient = torch.ones_like(self.torch_tensor)
+                    self.torch_tensor.backward(gradient=gradient, retain_graph=retain_graph)
+                
+                # 同步梯度到 NumPy
+                if self.torch_tensor.grad is not None:
+                    self.grad = self.torch_tensor.grad.cpu().numpy()
+                    self.data = self.torch_tensor.detach().cpu().numpy()
+            return
+        
+        # 原有的 NumPy 反向传播逻辑
         # 拓扑排序列表，用于按正确顺序执行反向传播
         topo = []
         # 已访问节点集合，避免重复访问

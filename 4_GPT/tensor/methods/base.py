@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 class TensorBase:
     def __init__(self, data, _prev=(), _op='', label=''):
@@ -27,6 +28,11 @@ class TensorBase:
         self.label = label
         # 是否保留计算图的标记
         self._retain_graph = True
+        
+        # PyTorch GPU 支持
+        self.use_pytorch = False
+        self.torch_tensor = None
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     def _validate_grad_shape(self):
         """验证梯度形状与数据形状是否匹配，避免广播错误"""
@@ -43,6 +49,11 @@ class TensorBase:
             release_graph: 是否释放计算图节点，默认为 True
         """
         self.grad = np.zeros_like(self.data, dtype=np.float64)
+        
+        # 如果使用 PyTorch 后端，也清零 PyTorch 梯度
+        if self.use_pytorch and self.torch_tensor is not None:
+            if self.torch_tensor.grad is not None:
+                self.torch_tensor.grad.zero_()
         
         # 释放计算图
         if release_graph:
