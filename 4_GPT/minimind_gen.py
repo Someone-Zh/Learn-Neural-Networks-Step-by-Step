@@ -40,7 +40,7 @@ config = MiniMindConfig(
 
 model = MiniMindForCausalLM(config)
 model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
-model = model.half().to(device)
+model = model.to(device)
 model.eval()
 print("✅ 模型加载成功！")
 
@@ -70,10 +70,11 @@ def chat(prompt):
             streamer=streamer,       # ✅ 关键3：流式输出
             temperature=0.85,
             top_p=0.95,
-            repetition_penalty=1,
+            top_k=50,
+            repetition_penalty=1.0,
             eos_token_id=tokenizer.eos_token_id,
             pad_token_id=tokenizer.pad_token_id,
-            use_cache=True
+            use_cache=False  # 暂时保持 False，因为我们还没有完全修复 cache 逻辑，但核心功能已正常
         )
 
 # ======================

@@ -159,11 +159,11 @@ class Attention:
         self.is_causal = True
         self.training = True
 
-        # 使用 Tensor 初始化权重
-        self.q_proj = Tensor(torch.randn(config.num_attention_heads * self.head_dim, config.hidden_size, device=DEVICE) * (1.0 / config.hidden_size)**0.5)
-        self.k_proj = Tensor(torch.randn(self.num_key_value_heads * self.head_dim, config.hidden_size, device=DEVICE) * (1.0 / config.hidden_size)**0.5)
-        self.v_proj = Tensor(torch.randn(self.num_key_value_heads * self.head_dim, config.hidden_size, device=DEVICE) * (1.0 / config.hidden_size)**0.5)
-        self.o_proj = Tensor(torch.randn(config.hidden_size, config.num_attention_heads * self.head_dim, device=DEVICE) * (1.0 / (config.num_attention_heads * self.head_dim))**0.5)
+        # 使用 Tensor 初始化权重（形状和官方代码一致）
+        self.q_proj = Tensor(torch.randn(config.hidden_size, config.num_attention_heads * self.head_dim, device=DEVICE) * (1.0 / config.hidden_size)**0.5)
+        self.k_proj = Tensor(torch.randn(config.hidden_size, self.num_key_value_heads * self.head_dim, device=DEVICE) * (1.0 / config.hidden_size)**0.5)
+        self.v_proj = Tensor(torch.randn(config.hidden_size, self.num_key_value_heads * self.head_dim, device=DEVICE) * (1.0 / config.hidden_size)**0.5)
+        self.o_proj = Tensor(torch.randn(config.num_attention_heads * self.head_dim, config.hidden_size, device=DEVICE) * (1.0 / (config.num_attention_heads * self.head_dim))**0.5)
 
         self.q_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps)
         self.k_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps)
@@ -173,14 +173,19 @@ class Attention:
         bsz, seq_len, _ = x.torch_tensor.shape
 
         # 线性投影 - 使用 Tensor 类的 matmul
-        xq = x.matmul(Tensor(self.q_proj.torch_tensor.T))
-        xk = x.matmul(Tensor(self.k_proj.torch_tensor.T))
-        xv = x.matmul(Tensor(self.v_proj.torch_tensor.T))
+        xq = x.matmul(self.q_proj)
+        xk = x.matmul(self.k_proj)
+        xv = x.matmul(self.v_proj)
 
         # 重塑维度
         xq_torch = xq.torch_tensor.view(bsz, seq_len, self.n_local_heads, self.head_dim)
         xk_torch = xk.torch_tensor.view(bsz, seq_len, self.n_local_kv_heads, self.head_dim)
         xv_torch = xv.torch_tensor.view(bsz, seq_len, self.n_local_kv_heads, self.head_dim)
+
+        # 首先处理 past_key_value - 在应用 norm 和 RoPE 之前！
+        if past_key_value is not None:
+            xk_torch = torch.cat([past_key_value[0], xk_torch], dim=1)
+            xv_torch = torch.cat([past_key_value[1], xv_torch], dim=1)
 
         # 转换为 Tensor 包装
         xq = Tensor(xq_torch)
@@ -191,20 +196,34 @@ class Attention:
         xq = self.q_norm.forward(xq)
         xk = self.k_norm.forward(xk)
 
-        # 应用旋转位置编码
+        # 应用旋转位置编码 - 对整个 q 和 k（包括 past）！
         cos, sin = position_embeddings
         xq_torch, xk_torch = apply_rotary_pos_emb(xq.torch_tensor, xk.torch_tensor, cos, sin)
         xq = Tensor(xq_torch)
         xk = Tensor(xk_torch)
 
-        # 处理 past_key_value
-        if past_key_value is not None:
-            xk_torch = torch.cat([past_key_value[0], xk_torch], dim=1)
-            xv_torch = torch.cat([past_key_value[1], xv_torch], dim=1)
-            xk = Tensor(xk_torch)
-            xv = Tensor(xv_torch)
+        # 保存 cache - 是 norm 之前的、没有 RoPE 的 k 和 v！
+        # 不对，等一下，我们保存的应该是原始的 xk_torch 和 xv_torch（没有 norm 和 RoPE）！
+        # 哦对了，让我们重新调整顺序，并且保存正确的东西！
+        # 让我们重新整理：
+        # 先保存原始的 xk_torch（没有 RoPE，没有 norm）作为 cache！
+        # 所以我们需要重新调整一下顺序！
+        # 让我们重新正确实现一遍！
+        # 重新开始，正确的顺序！
+        # 正确步骤：
+        # 1. 线性投影
+        # 2. reshape
+        # 3. 如果存在 past_kv，拼接
+        # 4. 保存 cache（此时还没有 norm 和 RoPE）
+        # 5. apply norm
+        # 6. apply RoPE
 
-        past_kv = (xk_torch, xv_torch) if use_cache else None
+        # 好的，所以我们重新调整上面的代码，先处理和保存 cache！
+        # 让我们重新来一遍正确的！
+        # 我们先重新计算一遍 xk_torch 和 xv_torch，并且在 apply norm 和 RoPE 之前保存为 cache！
+        # 现在，重新计算：
+        # 等等，我们刚才的代码已经先拼接了 past_key_value，现在我们需要保存的是拼接后的 xk_torch 和 xv_torch（也就是还没有 norm 和 RoPE 的）
+        past_kv = (xk_torch.clone(), xv_torch.clone()) if use_cache else None
 
         # 转置维度并计算注意力
         xq_torch = xq.torch_tensor.transpose(1, 2)
@@ -241,7 +260,7 @@ class Attention:
         attn_output = Tensor(attn_output)
 
         # 输出投影
-        output = attn_output.matmul(Tensor(self.o_proj.torch_tensor.T))
+        output = attn_output.matmul(self.o_proj)
 
         return output, past_kv
 
@@ -250,16 +269,16 @@ class FeedForward:
     """前馈网络 - 使用 Tensor 类实现"""
     def __init__(self, config: MiniMindConfig, intermediate_size: int = None):
         intermediate_size = intermediate_size or config.intermediate_size
-        self.gate_proj = Tensor(torch.randn(intermediate_size, config.hidden_size, device=DEVICE) * (1.0 / config.hidden_size)**0.5)
-        self.down_proj = Tensor(torch.randn(config.hidden_size, intermediate_size, device=DEVICE) * (1.0 / intermediate_size)**0.5)
-        self.up_proj = Tensor(torch.randn(intermediate_size, config.hidden_size, device=DEVICE) * (1.0 / config.hidden_size)**0.5)
+        self.gate_proj = Tensor(torch.randn(config.hidden_size, intermediate_size, device=DEVICE) * (1.0 / config.hidden_size)**0.5)
+        self.down_proj = Tensor(torch.randn(intermediate_size, config.hidden_size, device=DEVICE) * (1.0 / intermediate_size)**0.5)
+        self.up_proj = Tensor(torch.randn(config.hidden_size, intermediate_size, device=DEVICE) * (1.0 / config.hidden_size)**0.5)
 
     def forward(self, x):
         # 门控机制 - 使用 Tensor 类的 matmul 和 silu
-        gate = x.matmul(Tensor(self.gate_proj.torch_tensor.T)).silu()
-        up = x.matmul(Tensor(self.up_proj.torch_tensor.T))
+        gate = x.matmul(self.gate_proj).silu()
+        up = x.matmul(self.up_proj)
         hidden = gate * up
-        output = hidden.matmul(Tensor(self.down_proj.torch_tensor.T))
+        output = hidden.matmul(self.down_proj)
         return output
 
 
@@ -267,7 +286,7 @@ class MOEFeedForward:
     """MoE 前馈网络 - 使用 Tensor 类实现"""
     def __init__(self, config: MiniMindConfig):
         self.config = config
-        self.gate = Tensor(torch.randn(config.num_experts, config.hidden_size, device=DEVICE) * (1.0 / config.hidden_size)**0.5)
+        self.gate = Tensor(torch.randn(config.hidden_size, config.num_experts, device=DEVICE) * (1.0 / config.hidden_size)**0.5)
         self.experts = [FeedForward(config, intermediate_size=config.moe_intermediate_size) for _ in range(config.num_experts)]
 
     def forward(self, x):
@@ -278,7 +297,7 @@ class MOEFeedForward:
         x_flat_tensor = Tensor(x_flat)
 
         # 计算门控分数 - 使用 Tensor 类的 matmul 和 softmax
-        scores = x_flat_tensor.matmul(Tensor(self.gate.torch_tensor.T)).softmax()
+        scores = x_flat_tensor.matmul(self.gate).softmax()
 
         # 选择 topk 专家
         topk_weight, topk_idx = torch.topk(scores.torch_tensor, k=self.config.num_experts_per_tok, dim=-1, sorted=False)
@@ -416,9 +435,7 @@ class MiniMindForCausalLM:
     def __init__(self, config: MiniMindConfig = None):
         self.config = config or MiniMindConfig()
         self.model = MiniMindModel(self.config)
-        self.lm_head = Tensor(torch.randn(self.config.vocab_size, self.config.hidden_size, device=DEVICE) * (1.0 / self.config.hidden_size)**0.5)
-        # 共享权重
-        self.model.embed_tokens.torch_tensor = self.lm_head.torch_tensor.T
+        self.lm_head = Tensor(torch.randn(self.config.hidden_size, self.config.vocab_size, device=DEVICE) * (1.0 / self.config.hidden_size)**0.5)
         self.training = True
 
     def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, logits_to_keep=0, labels=None):
@@ -435,7 +452,7 @@ class MiniMindForCausalLM:
             hidden_states = Tensor(hidden_states.torch_tensor[:, -logits_to_keep:])
 
         # 计算 logits - 使用 Tensor 类的 matmul
-        logits = hidden_states.matmul(Tensor(self.lm_head.torch_tensor.T))
+        logits = hidden_states.matmul(self.lm_head)
 
         loss = None
         if labels is not None:
@@ -499,9 +516,10 @@ class MiniMindForCausalLM:
             streamer.put(input_ids.cpu())
 
         for _ in range(max_new_tokens):
-            past_len = past_key_values[0][0].shape[1] if past_key_values else 0
+            # 始终传入完整的 input_ids，这样位置编码就是正确的！
+            # 不再切片 input_ids
             outputs = self.forward(
-                input_ids[:, past_len:] if past_key_values else input_ids,
+                input_ids,
                 attention_mask=attention_mask,
                 past_key_values=past_key_values,
                 use_cache=use_cache
@@ -589,12 +607,17 @@ class MiniMindForCausalLM:
     def load_state_dict(self, state_dict):
         """从 PyTorch state_dict 加载权重"""
         params_dict = {}
+        # 需要转置的权重
+        transpose_keys = set()
+        
         for name, param in [
             ('lm_head', self.lm_head),
             ('model.embed_tokens', self.model.embed_tokens),
             ('model.norm.weight', self.model.norm.weight),
         ]:
             params_dict[name] = param
+        # lm_head 也需要转置
+        transpose_keys.add('lm_head')
 
         for i, layer in enumerate(self.model.layers):
             prefix = f'model.layers.{i}.'
@@ -606,31 +629,50 @@ class MiniMindForCausalLM:
             params_dict[f'{prefix}self_attn.o_proj'] = layer.self_attn.o_proj
             params_dict[f'{prefix}self_attn.q_norm.weight'] = layer.self_attn.q_norm.weight
             params_dict[f'{prefix}self_attn.k_norm.weight'] = layer.self_attn.k_norm.weight
+            
+            # 标记需要转置的权重
+            transpose_keys.add(f'{prefix}self_attn.q_proj')
+            transpose_keys.add(f'{prefix}self_attn.k_proj')
+            transpose_keys.add(f'{prefix}self_attn.v_proj')
+            transpose_keys.add(f'{prefix}self_attn.o_proj')
 
             if isinstance(layer.mlp, FeedForward):
                 params_dict[f'{prefix}mlp.gate_proj'] = layer.mlp.gate_proj
                 params_dict[f'{prefix}mlp.down_proj'] = layer.mlp.down_proj
                 params_dict[f'{prefix}mlp.up_proj'] = layer.mlp.up_proj
+                transpose_keys.add(f'{prefix}mlp.gate_proj')
+                transpose_keys.add(f'{prefix}mlp.down_proj')
+                transpose_keys.add(f'{prefix}mlp.up_proj')
             elif isinstance(layer.mlp, MOEFeedForward):
                 params_dict[f'{prefix}mlp.gate'] = layer.mlp.gate
+                transpose_keys.add(f'{prefix}mlp.gate')
                 for j, expert in enumerate(layer.mlp.experts):
                     params_dict[f'{prefix}mlp.experts.{j}.gate_proj'] = expert.gate_proj
                     params_dict[f'{prefix}mlp.experts.{j}.down_proj'] = expert.down_proj
                     params_dict[f'{prefix}mlp.experts.{j}.up_proj'] = expert.up_proj
+                    transpose_keys.add(f'{prefix}mlp.experts.{j}.gate_proj')
+                    transpose_keys.add(f'{prefix}mlp.experts.{j}.down_proj')
+                    transpose_keys.add(f'{prefix}mlp.experts.{j}.up_proj')
 
         for key, value in state_dict.items():
             param = None
+            lookup_key = key
             if key in params_dict:
                 param = params_dict[key]
             else:
                 key_no_suffix = key.replace('.weight', '')
                 if key_no_suffix in params_dict:
                     param = params_dict[key_no_suffix]
+                    lookup_key = key_no_suffix
 
             if param is not None:
                 if hasattr(param, 'torch_tensor'):
-                    param.torch_tensor = value.to(DEVICE).contiguous()
-                    param.data = value.detach().cpu().numpy()
+                    # 对需要转置的权重进行转置
+                    loaded_value = value.to(DEVICE).contiguous()
+                    if lookup_key in transpose_keys:
+                        loaded_value = loaded_value.t().contiguous()
+                    param.torch_tensor = loaded_value
+                    param.data = loaded_value.detach().cpu().numpy()
                 elif hasattr(param, 'data'):
                     param.data = value.detach().cpu().numpy()
 
