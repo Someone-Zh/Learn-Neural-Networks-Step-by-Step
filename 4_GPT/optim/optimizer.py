@@ -102,19 +102,19 @@ class Adam(Optimizer):
         self.t += 1  # 更新步数计数器
         for idx, p in enumerate(self.params):
             if p.grad is None: continue
-            
+
             curr_m = self.m[idx]  # 获取当前参数对应的一阶矩估计
             curr_v = self.v[idx]  # 获取当前参数对应的二阶矩估计
-            
+
             # 支持 PyTorch Tensor
             if hasattr(p, 'torch_tensor') and p.torch_tensor is not None and USE_PYTORCH_BACKEND:
                 # 使用 PyTorch 进行 Adam 更新（全部在 GPU 上）
                 grad = p.torch_tensor.grad
-                
+
                 # 如果梯度为None，跳过
                 if grad is None:
                     continue
-                
+
                 with torch.no_grad():
                     # 确保状态变量在同一设备上
                     if isinstance(curr_m, np.ndarray):
@@ -123,21 +123,30 @@ class Adam(Optimizer):
                         curr_v = torch.from_numpy(curr_v).to(p.torch_tensor.device)
                         self.m[idx] = curr_m
                         self.v[idx] = curr_v
-                    
+                    else:
+                        # 确保 m / v 的 dtype 与 grad 一致，避免半精度溢出
+                        if curr_m.dtype != grad.dtype:
+                            curr_m = curr_m.to(grad.dtype)
+                        if curr_v.dtype != grad.dtype:
+                            curr_v = curr_v.to(grad.dtype)
+
                     # Adam 更新公式（完全在 GPU 上执行）
                     new_m = self.beta1 * curr_m + (1 - self.beta1) * grad
                     new_v = self.beta2 * curr_v + (1 - self.beta2) * (grad ** 2)
-                    
+
                     m_hat = new_m / (1 - self.beta1 ** self.t)
                     v_hat = new_v / (1 - self.beta2 ** self.t)
-                    
-                    # 参数更新
-                    p.torch_tensor -= self.lr * m_hat / (torch.sqrt(v_hat) + self.eps)
-                
-                # 同步回 NumPy（如果需要）
-                p.data = p.torch_tensor.detach().cpu().numpy()
-                p.grad = grad.cpu().numpy() if grad is not None else None
-                
+
+                    # 参数更新：必须使用 in-place，否则 torch_tensor 引用会被替换
+                    delta = self.lr * m_hat / (torch.sqrt(v_hat) + self.eps)
+                    p.torch_tensor.copy_(p.torch_tensor - delta.to(p.torch_tensor.dtype))
+
+                # 同步回 NumPy（如果需要）——但不替换 torch_tensor 引用本身
+                try:
+                    p.grad = grad.detach().cpu().numpy()
+                except Exception:
+                    pass
+
                 # 更新状态（保持为 PyTorch Tensor 在 GPU 上）
                 self.m[idx] = new_m
                 self.v[idx] = new_v
@@ -145,14 +154,14 @@ class Adam(Optimizer):
                 # 原有的 NumPy 实现
                 new_m = self.beta1 * curr_m + (1 - self.beta1) * p.grad
                 new_v = self.beta2 * curr_v + (1 - self.beta2) * (p.grad ** 2)
-                
+
                 # 偏差校正
                 m_hat = new_m / (1 - self.beta1 ** self.t)
                 v_hat = new_v / (1 - self.beta2 ** self.t)
-                
+
                 # 使用校正后的一阶矩和二阶矩更新参数
                 p.data = p.data - self.lr * m_hat / (np.sqrt(v_hat) + self.eps)
-                
+
                 # 更新状态
                 self.m[idx] = new_m
                 self.v[idx] = new_v

@@ -77,13 +77,33 @@ class Tensor:
     
     @data.setter
     def data(self, value):
-        """设置 torch_tensor（通过numpy数组）"""
+        """设置 torch_tensor 的数值；尽可能 in-place 更新，避免破坏外部引用"""
+        if self.torch_tensor is None or not hasattr(self.torch_tensor, "shape"):
+            # 首次初始化，正常路径
+            if isinstance(value, np.ndarray):
+                self.torch_tensor = torch.from_numpy(value.astype(np.float32)).to(self.device)
+            elif isinstance(value, torch.Tensor):
+                self.torch_tensor = value.to(self.device)
+            else:
+                self.torch_tensor = torch.tensor(value, dtype=torch.float32, device=self.device)
+            return
+
+        # 已有 tensor，尝试 in-place 更新（保持原 tensor 引用不变）
+        src = None
         if isinstance(value, np.ndarray):
-            self.torch_tensor = torch.from_numpy(value.astype(np.float32)).to(self.device)
+            src = torch.from_numpy(value.astype(np.float32)).to(self.device)
         elif isinstance(value, torch.Tensor):
-            self.torch_tensor = value.to(self.device)
+            src = value.to(self.device)
         else:
-            self.torch_tensor = torch.tensor(value, dtype=torch.float32, device=self.device)
+            src = torch.tensor(value, dtype=torch.float32, device=self.device)
+
+        if src.shape == self.torch_tensor.shape and src.dtype == self.torch_tensor.dtype:
+            # dtype 与 shape 一致 -> 直接 in-place copy
+            with torch.no_grad():
+                self.torch_tensor.copy_(src)
+        else:
+            # 形状/类型变了，只能替换
+            self.torch_tensor = src
     
     # 代理方法
     def _validate_grad_shape(self):
