@@ -5,7 +5,7 @@ from transformers import AutoTokenizer, TextStreamer
 # 路径
 # ======================
 MODEL_PATH    = r"4_GPT/dataset/full_sft_768.pth"
-TOKENIZER_PATH = r"4_GPT/dataset/full_sft_768.pth"
+TOKENIZER_PATH = r"4_GPT/dataset/"
 
 # ======================
 # 设备
@@ -81,6 +81,6 @@ def chat(prompt):
 # 测试
 # ======================
 if __name__ == "__main__":
-    prompt = "我该如何挑选电视？"
+    prompt = "给我段python读取文件的代码"
     print(f"\n🧑 你: {prompt}")
     chat(prompt)
