@@ -4,8 +4,8 @@ from transformers import AutoTokenizer, TextStreamer
 # ======================
 # 路径
 # ======================
-MODEL_PATH    = r"C:\Users\Zh-So\Downloads\full_sft_768_moe.pth"
-TOKENIZER_PATH = r"G:\CodeSpace\Python\Learn-Neural-Networks-Step-by-Step\4_GPT\dataset"
+MODEL_PATH    = r"4_GPT/dataset/full_sft_768.pth"
+TOKENIZER_PATH = r"4_GPT/dataset/full_sft_768.pth"
 
 # ======================
 # 设备
@@ -35,7 +35,7 @@ config = MiniMindConfig(
     num_key_value_heads=4,
     vocab_size=tokenizer.vocab_size,
     flash_attn=False,
-    use_moe=True
+    use_moe=False
 )
 
 model = MiniMindForCausalLM(config)
